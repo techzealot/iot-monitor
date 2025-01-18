@@ -1,8 +1,20 @@
 import { Stack } from "expo-router";
 
-import "@/global.css";
 import { GluestackUIProvider } from "@/components/ui/gluestack-ui-provider";
+import "@/global.css";
+import { StatusBar } from "expo-status-bar";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function RootLayout() {
-  return <GluestackUIProvider mode="light"><Stack /></GluestackUIProvider>;
+  return (
+    <SafeAreaView className="h-[98%]">
+      <GluestackUIProvider mode="light">
+        <Stack>
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="+not-found" options={{ headerShown: false }} />
+        </Stack>
+        <StatusBar style="auto" />
+      </GluestackUIProvider>
+    </SafeAreaView>
+  );
 }
