@@ -41,6 +41,13 @@ export default function TabOneScreen() {
   // 开始扫描
   const startScan = useCallback(async () => {
     try {
+      if (isScanning) {
+        // 如果正在扫描，则停止扫描
+        bleManager.stopDeviceScan();
+        setIsScanning(false);
+        return;
+      }
+
       // 断开所有已连接设备
       const connectedDevices = await bluetoothManager.getConnectedDevices();
       for (const device of connectedDevices) {
@@ -49,7 +56,6 @@ export default function TabOneScreen() {
 
       // 开始扫描
       setIsScanning(true);
-      setDevices([]);
 
       await bleManager.startDeviceScan(
         null,
@@ -63,21 +69,31 @@ export default function TabOneScreen() {
 
           if (device && device.name) {
             setDevices((prev) => {
-              // 检查设备是否已存在
-              const exists = prev.some((d) => d.id === device.id);
-              if (!exists) {
+              const index = prev.findIndex((d) => d.id === device.id);
+              if (index === -1) {
+                // 如果设备不存在，添加到列表
                 return [...prev, device];
+              } else {
+                // 如果设备已存在，更新设备信息
+                const newDevices = [...prev];
+                newDevices[index] = device;
+                return newDevices;
               }
-              return prev;
             });
           }
         },
       );
+
+      // 10秒后自动停止扫描
+      setTimeout(() => {
+        bleManager.stopDeviceScan();
+        setIsScanning(false);
+      }, 10000);
     } catch (error) {
       console.error("启动扫描失败:", error);
       setIsScanning(false);
     }
-  }, []);
+  }, [isScanning]);
 
   // 连接设备
   const connectDevice = async (device: Device) => {
@@ -135,9 +151,6 @@ export default function TabOneScreen() {
           <Text className="text-sm text-gray-500">
             信号强度: {device.rssi || "未知"}
           </Text>
-          <Text className="text-sm text-gray-500">
-            状态: {isConnected ? "已连接" : "未连接"}
-          </Text>
         </Box>
         {isConnected ? (
           <Box className="justify-between">
@@ -189,9 +202,8 @@ export default function TabOneScreen() {
           variant="solid"
           className={isScanning ? "bg-gray-500" : "bg-blue-500"}
           onPress={startScan}
-          disabled={isScanning}
         >
-          <ButtonText>{isScanning ? "扫描中..." : "开始扫描"}</ButtonText>
+          <ButtonText>{isScanning ? "停止扫描" : "开始扫描"}</ButtonText>
         </Button>
       </Box>
 
