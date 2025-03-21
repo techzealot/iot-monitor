@@ -1,8 +1,7 @@
 import { Box } from "@/components/ui/box";
 import { Button, ButtonText } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
-import { bleManager } from "@/lib/bluetooth/manager";
-import { Buffer } from "@craftzdog/react-native-buffer";
+import { bluetoothManager } from "@/lib/bluetooth/manager";
 import { Ionicons } from "@expo/vector-icons";
 import { router, Stack } from "expo-router";
 import React, { useEffect, useState } from "react";
@@ -25,59 +24,15 @@ export default function NetworkScreen() {
   // 加载已连接设备
   const loadConnectedDevices = async () => {
     try {
-      console.log("开始获取已连接设备...");
+      const devices = await bluetoothManager.getConnectedDevices();
 
-      // 使用已知的服务 UUID 获取设备
-      const serviceUUIDs = [
-        "55535343-fe7d-4ae5-8fa9-9fafd205e455",
-        "00112233-4455-6677-8899-aabbccddeeff",
-      ];
-      console.log("使用服务 UUID 列表:", serviceUUIDs);
-
-      const devices = await bleManager.connectedDevices(serviceUUIDs);
-      console.log("获取到的已连接设备数量:", devices.length);
-
-      if (devices.length === 0) {
-        // 如果没有找到设备，尝试获取所有设备
-        console.log("尝试获取所有已知设备...");
-        const allDevices = await bleManager.devices([]);
-        const connectedDevices = [];
-
-        // 检查每个设备的连接状态
-        for (const device of allDevices) {
-          try {
-            const isConnected = await device.isConnected();
-            console.log("检查设备连接状态:", {
-              id: device.id,
-              name: device.name,
-              isConnected,
-            });
-
-            if (isConnected) {
-              // 设置通知监听
-              await setupDeviceNotification(device);
-              connectedDevices.push(device);
-            }
-          } catch (error) {
-            console.error("检查设备连接状态失败:", device.id, error);
-          }
-        }
-
-        if (connectedDevices.length > 0) {
-          console.log("找到已连接设备:", connectedDevices.length);
-          setConnectedDevices(connectedDevices);
-        } else {
-          console.log("没有找到已连接设备");
-          setConnectedDevices([]);
-        }
-      } else {
-        console.log("直接使用已连接设备列表");
+      if (devices.length > 0) {
         // 为每个设备设置通知监听
         for (const device of devices) {
           await setupDeviceNotification(device);
         }
-        setConnectedDevices(devices);
       }
+      setConnectedDevices(devices);
     } catch (error) {
       console.error("加载已连接设备失败:", error);
       setConnectedDevices([]);
@@ -86,61 +41,18 @@ export default function NetworkScreen() {
 
   // 设置设备的通知监听
   const setupDeviceNotification = async (device: Device) => {
-    try {
-      // 发现服务和特征
-      const discoveredDevice =
-        await device.discoverAllServicesAndCharacteristics();
-      const services = await discoveredDevice.services();
-
-      // 查找目标服务
-      const targetService = services.find(
-        (service) => service.uuid === "55535343-fe7d-4ae5-8fa9-9fafd205e455",
-      );
-
-      if (targetService) {
-        const characteristics = await targetService.characteristics();
-        // 查找通知特征
-        const notifyCharacteristic = characteristics.find(
-          (char) => char.uuid === "49535343-8841-43f4-a8d4-ecbe34729bb3",
-        );
-
-        if (notifyCharacteristic) {
-          // 设置通知监听
-          const subscription = notifyCharacteristic.monitor(
-            (error, characteristic) => {
-              if (error) {
-                console.warn("Monitor error:", error);
-                return;
-              }
-              if (characteristic?.value) {
-                const decodedValue = Buffer.from(
-                  characteristic.value,
-                  "base64",
-                ).toString("utf8");
-                console.log("收到数据:", decodedValue);
-
-                // 添加接收的消息到列表
-                setMessages((prev) => [
-                  ...prev,
-                  {
-                    deviceId: device.id,
-                    deviceName: device.name || "未知设备",
-                    content: decodedValue,
-                    timestamp: Date.now(),
-                    isFromDevice: true,
-                  },
-                ]);
-              }
-            },
-          );
-
-          // 保存监听器
-          return subscription;
-        }
-      }
-    } catch (error) {
-      console.error("设置设备通知监听失败:", device.name, error);
-    }
+    return bluetoothManager.onMessageReceived(device, (message) => {
+      setMessages((prev) => [
+        ...prev,
+        {
+          deviceId: device.id,
+          deviceName: device.name || "未知设备",
+          content: message,
+          timestamp: Date.now(),
+          isFromDevice: true,
+        },
+      ]);
+    });
   };
 
   useEffect(() => {
@@ -162,51 +74,21 @@ export default function NetworkScreen() {
     try {
       // 遍历所有已连接设备
       for (const device of connectedDevices) {
-        try {
-          // 发现服务和特征
-          const discoveredDevice =
-            await device.discoverAllServicesAndCharacteristics();
-          const services = await discoveredDevice.services();
-
-          // 查找目标服务
-          const targetService = services.find(
-            (service) =>
-              service.uuid === "55535343-fe7d-4ae5-8fa9-9fafd205e455",
-          );
-
-          if (targetService) {
-            const characteristics = await targetService.characteristics();
-            // 查找可写特征
-            const writeCharacteristic = characteristics.find(
-              (char) => char.uuid === "49535343-1e4d-4bd9-ba61-23c647249616",
-            );
-
-            if (writeCharacteristic) {
-              // 发送消息
-              const messageBuffer = Buffer.from(message);
-              const base64Message = messageBuffer.toString("base64");
-              await writeCharacteristic.writeWithResponse(base64Message);
-
-              // 添加发送的消息到列表
-              setMessages((prev) => [
-                ...prev,
-                {
-                  deviceId: device.id,
-                  deviceName: device.name || "未知设备",
-                  content: message,
-                  timestamp: Date.now(),
-                  isFromDevice: false,
-                },
-              ]);
-            }
-          }
-        } catch (error) {
-          console.error("向设备发送消息失败:", device.name, error);
-        }
+        await bluetoothManager.sendMessage(device, message);
+        // 添加发送的消息到列表
+        setMessages((prev) => [
+          ...prev,
+          {
+            deviceId: device.id,
+            deviceName: device.name || "未知设备",
+            content: message,
+            timestamp: Date.now(),
+            isFromDevice: false,
+          },
+        ]);
+        // 清空输入
+        setMessage("");
       }
-
-      // 清空输入
-      setMessage("");
     } catch (error) {
       console.error("群发消息失败:", error);
       alert("发送失败: " + (error as Error).message);

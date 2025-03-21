@@ -2,17 +2,11 @@ import { Box } from "@/components/ui/box";
 import { Button, ButtonText } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
 import { bleManager, bluetoothManager } from "@/lib/bluetooth/manager";
-import { Buffer } from "@craftzdog/react-native-buffer";
 import { Ionicons } from "@expo/vector-icons";
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useState } from "react";
 import { StyleSheet, TextInput, View } from "react-native";
-import { Characteristic, Device } from "react-native-ble-plx";
-
-// 定义服务和特征 UUID
-const SERVICE_UUID = "55535343-fe7d-4ae5-8fa9-9fafd205e455";
-const NOTIFY_CHARACTERISTIC_UUID = "49535343-8841-43f4-a8d4-ecbe34729bb3";
-const WRITE_CHARACTERISTIC_UUID = "49535343-1e4d-4bd9-ba61-23c647249616";
+import { Device } from "react-native-ble-plx";
 
 export default function DeviceScreen() {
   const { deviceId } = useLocalSearchParams<{ deviceId: string }>();
@@ -59,12 +53,7 @@ export default function DeviceScreen() {
   useEffect(() => {
     const loadDevice = async () => {
       try {
-        const serviceUUIDs = [
-          "55535343-fe7d-4ae5-8fa9-9fafd205e455",
-          "00112233-4455-6677-8899-aabbccddeeff",
-        ];
-        console.log("开始加载设备:", deviceId);
-        const devices = await bleManager.connectedDevices(serviceUUIDs);
+        const devices = await bluetoothManager.getConnectedDevices();
         let device = devices.find((d: Device) => d.id === deviceId);
 
         if (!device) {
@@ -73,7 +62,6 @@ export default function DeviceScreen() {
             device = await bleManager.connectToDevice(deviceId);
             console.log("成功连接到设备:", device.name);
           } catch (connectError) {
-            console.error("连接失败:", connectError);
             alert("连接设备失败: " + (connectError as Error).message);
             router.back();
             return;
@@ -81,68 +69,22 @@ export default function DeviceScreen() {
         }
 
         if (device) {
-          console.log("开始发现服务和特征...");
-          // 发现所有服务和特征
-          const discoveredDevice =
-            await device.discoverAllServicesAndCharacteristics();
-          console.log("服务和特征发现完成");
-
-          // 获取所有服务和特征
-          const services = await discoveredDevice.services();
-          console.log("发现服务数量:", services.length);
-
-          // 打印所有服务的 UUID
-          for (const service of services) {
-            console.log("服务 UUID:", service.uuid);
-            const chars = await service.characteristics();
-            console.log("服务", service.uuid, "的特征数量:", chars.length);
-            // 打印该服务下所有特征的 UUID
-            for (const char of chars) {
-              console.log("特征 UUID:", char.uuid, "属性:", {
-                isNotifiable: char.isNotifiable,
-                isNotifying: char.isNotifying,
-                isReadable: char.isReadable,
-                isWritableWithResponse: char.isWritableWithResponse,
-                isWritableWithoutResponse: char.isWritableWithoutResponse,
-              });
-            }
-          }
-
           // 设置设备
-          setDevice(discoveredDevice);
-
+          setDevice(device);
           // 设置通知监听
-          const subscription = discoveredDevice.monitorCharacteristicForService(
-            SERVICE_UUID,
-            NOTIFY_CHARACTERISTIC_UUID,
-            (error: Error | null, characteristic: Characteristic | null) => {
-              if (error) {
-                console.warn("Monitor error:", error);
-                return;
-              }
-              if (characteristic?.value) {
-                const decodedValue = Buffer.from(
-                  characteristic.value,
-                  "base64",
-                ).toString("utf8");
-                console.log("收到数据:", decodedValue);
-                setReceivedMessages((prev) => [
-                  ...prev,
-                  `接收: ${decodedValue}`,
-                ]);
-              }
+          const subscription = await bluetoothManager.onMessageReceived(
+            device,
+            (message) => {
+              setReceivedMessages((prev) => [...prev, `接收: ${message}`]);
             },
           );
           bluetoothManager.addMonitorSubscription(deviceId, subscription);
-          console.log("已设置通知监听");
         } else {
           console.log("未找到设备");
-          alert("未找到设备");
           router.back();
         }
       } catch (error) {
         console.error("加载设备失败:", error);
-        alert("加载设备失败: " + (error as Error).message);
         router.back();
       }
     };
@@ -176,25 +118,9 @@ export default function DeviceScreen() {
     if (!device || !message.trim()) return;
 
     try {
-      console.log("开始发送消息...");
-      // 确保服务和特征已发现
-      const discoveredDevice =
-        await device.discoverAllServicesAndCharacteristics();
-      console.log("服务和特征发现完成");
-
-      // 发送数据
-      const messageBuffer = Buffer.from(message);
-      const base64Message = messageBuffer.toString("base64");
-      await discoveredDevice.writeCharacteristicWithResponseForService(
-        SERVICE_UUID,
-        WRITE_CHARACTERISTIC_UUID,
-        base64Message,
-      );
-      console.log("消息发送成功");
-
+      await bluetoothManager.sendMessage(device, message);
       // 更新消息历史
       setReceivedMessages((prev) => [...prev, `发送: ${message}`]);
-
       // 清空输入
       setMessage("");
     } catch (error) {

@@ -1,7 +1,7 @@
 import { Box } from "@/components/ui/box";
 import { Button, ButtonText } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
-import { bleManager } from "@/lib/bluetooth/manager";
+import { bleManager, bluetoothManager } from "@/lib/bluetooth/manager";
 import { router } from "expo-router";
 import { useCallback, useState } from "react";
 import { FlatList, StyleSheet } from "react-native";
@@ -42,11 +42,7 @@ export default function TabOneScreen() {
   const startScan = useCallback(async () => {
     try {
       // 断开所有已连接设备
-      const serviceUUIDs = [
-        "55535343-fe7d-4ae5-8fa9-9fafd205e455",
-        "00112233-4455-6677-8899-aabbccddeeff",
-      ];
-      const connectedDevices = await bleManager.connectedDevices(serviceUUIDs);
+      const connectedDevices = await bluetoothManager.getConnectedDevices();
       for (const device of connectedDevices) {
         await device.cancelConnection();
       }
@@ -55,35 +51,28 @@ export default function TabOneScreen() {
       setIsScanning(true);
       setDevices([]);
 
-      // 获取已连接设备
-      const connected = await bleManager.connectedDevices([]);
-      setConnectedDeviceIds(connected.map((d) => d.id));
+      await bleManager.startDeviceScan(
+        null,
+        { allowDuplicates: false },
+        (error, device) => {
+          if (error) {
+            console.error("扫描错误:", error);
+            setIsScanning(false);
+            return;
+          }
 
-      // 开始扫描
-      bleManager.startDeviceScan(null, null, (error, device) => {
-        if (error) {
-          console.error("扫描错误:", error);
-          setIsScanning(false);
-          return;
-        }
-
-        if (device && device.name) {
-          // 只处理有名称的设备
-          setDevices((prevDevices) => {
-            const exists = prevDevices.some((d) => d.id === device.id);
-            if (!exists) {
-              return [...prevDevices, device];
-            }
-            return prevDevices;
-          });
-        }
-      });
-
-      // 10秒后停止扫描
-      setTimeout(() => {
-        bleManager.stopDeviceScan();
-        setIsScanning(false);
-      }, 10000);
+          if (device && device.name) {
+            setDevices((prev) => {
+              // 检查设备是否已存在
+              const exists = prev.some((d) => d.id === device.id);
+              if (!exists) {
+                return [...prev, device];
+              }
+              return prev;
+            });
+          }
+        },
+      );
     } catch (error) {
       console.error("启动扫描失败:", error);
       setIsScanning(false);
@@ -115,9 +104,11 @@ export default function TabOneScreen() {
   const disconnectDevice = async (device: Device) => {
     try {
       console.log("正在断开设备连接:", device.id);
-      // 断开连接
-      await device.cancelConnection();
-      console.log("设备已断开连接:", device.name);
+      if (await device.isConnected()) {
+        // 断开连接
+        await device.cancelConnection();
+        console.log("设备已断开连接:", device.name);
+      }
 
       // 更新已连接设备列表
       setConnectedDeviceIds((prev) => prev.filter((id) => id !== device.id));
