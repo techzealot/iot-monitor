@@ -3,22 +3,21 @@ import { BleManager, Characteristic, Device, Subscription } from "react-native-b
 
 // 创建全局单例
 class BluetoothManager {
-    // 定义服务和特征 UUID
+    // 服务uuid和特性uuid从combo文档中获取
     static readonly SERVICE_UUID = "55535343-fe7d-4ae5-8fa9-9fafd205e455";
-    static readonly NOTIFY_CHARACTERISTIC_UUID = "49535343-8841-43f4-a8d4-ecbe34729bb3";
     static readonly WRITE_CHARACTERISTIC_UUID = "49535343-1e4d-4bd9-ba61-23c647249616";
+    // read和notify特证是相同的
+    static readonly NOTIFY_CHARACTERISTIC_UUID = "49535343-8841-43f4-a8d4-ecbe34729bb3";
+    static readonly READ_CHARACTERISTIC_UUID = "49535343-8841-43f4-a8d4-ecbe34729bb3";
 
     private static instance: BluetoothManager;
     private manager: BleManager;
-    private monitorSubscriptions: Map<string, Subscription[]>;
     private serviceUUIDs = [
         "55535343-fe7d-4ae5-8fa9-9fafd205e455",
-        "00112233-4455-6677-8899-aabbccddeeff",
     ];
 
     private constructor() {
         this.manager = new BleManager();
-        this.monitorSubscriptions = new Map();
     }
 
     public static getInstance(): BluetoothManager {
@@ -32,40 +31,19 @@ class BluetoothManager {
         return this.manager;
     }
 
-    // 添加监听器
-    public addMonitorSubscription(deviceId: string, subscription: Subscription) {
-        const subs = this.monitorSubscriptions.get(deviceId) || [];
-        subs.push(subscription);
-        this.monitorSubscriptions.set(deviceId, subs);
-    }
-
-    // 移除设备的所有监听器
-    public removeDeviceMonitors(deviceId: string) {
-        const subs = this.monitorSubscriptions.get(deviceId);
-        if (subs) {
-            subs.forEach(sub => sub.remove());
-            this.monitorSubscriptions.delete(deviceId);
-            console.log(`已移除设备 ${deviceId} 的所有监听器`);
-        }
-    }
-
     public destroy() {
-        // 清理所有监听器
-        this.monitorSubscriptions.forEach((subs, deviceId) => {
-            subs.forEach(sub => sub.remove());
-        });
-        this.monitorSubscriptions.clear();
-
         if (this.manager) {
             this.manager.destroy();
         }
     }
+
 
     /**
      * 获取所有已连接的设备
      * @returns Promise<Device[]> 已连接的设备列表
      */
     public async getConnectedDevices(): Promise<Device[]> {
+        //必须传入serviceUUIDs 否则获取不到设备
         return this.manager.connectedDevices(this.serviceUUIDs);
     }
 
@@ -82,7 +60,13 @@ class BluetoothManager {
         );
     }
 
-    public async onMessageReceived(device: Device, callback: (message: string) => void): Promise<Subscription> {
+    /**
+     * 监听消息通知 一般不使用 能接收的数据量很小只有20字节
+     * @param device 蓝牙设备
+     * @param callback 回调函数
+     * @returns Promise<Subscription> 订阅对象
+     */
+    public async onMessageNotify(device: Device, callback: (message: string) => void): Promise<Subscription> {
         const discoveredDevice: Device =
             await device.discoverAllServicesAndCharacteristics();
         return discoveredDevice.monitorCharacteristicForService(
@@ -103,6 +87,65 @@ class BluetoothManager {
                 }
             }
         );
+    }
+
+    public async readMessage(device: Device, callback: (message: string) => void): Promise<void> {
+        const discoveredDevice = await device.discoverAllServicesAndCharacteristics();
+        const characteristic = await discoveredDevice.readCharacteristicForService(
+            BluetoothManager.SERVICE_UUID,
+            BluetoothManager.READ_CHARACTERISTIC_UUID,
+        );
+        if (characteristic?.value) {
+            const decodedValue = Buffer.from(
+                characteristic.value,
+                "base64",
+            ).toString("utf8");
+            console.log("收到数据:", decodedValue);
+            callback(decodedValue);
+        }
+    }
+
+    /**
+     * 获取服务的所有特征
+     * @param device 蓝牙设备
+     * @returns Promise<Characteristic[]> 特征列表
+     */
+    public async retrieveServiceCharacteristics(device: Device): Promise<Characteristic[]> {
+        try {
+            console.log("开始获取服务特征...");
+            const discoveredDevice = await device.discoverAllServicesAndCharacteristics();
+            const services = await discoveredDevice.services();
+            console.log("发现服务数量:", services.length);
+
+            // 查找目标服务
+            const targetService = services.find(
+                service => service.uuid === BluetoothManager.SERVICE_UUID
+            );
+
+            if (targetService) {
+                const characteristics = await targetService.characteristics();
+                console.log("目标服务特征数量:", characteristics.length);
+
+                // 遍历并打印所有特征信息
+                characteristics.forEach(characteristic => {
+                    console.log("特征信息:", {
+                        uuid: characteristic.uuid,
+                        isNotifying: characteristic.isNotifying,
+                        isWritableWithResponse: characteristic.isWritableWithResponse,
+                        isWritableWithoutResponse: characteristic.isWritableWithoutResponse,
+                        isReadable: characteristic.isReadable,
+                    });
+                });
+
+                return characteristics;
+            } else {
+                console.log("未找到目标服务");
+                return [];
+            }
+        } catch (error) {
+            console.error("获取服务特征失败:", error);
+            return [];
+        }
     }
 }
 

@@ -72,13 +72,12 @@ export default function DeviceScreen() {
           // 设置设备
           setDevice(device);
           // 设置通知监听
-          const subscription = await bluetoothManager.onMessageReceived(
+          const subscription = await bluetoothManager.readMessage(
             device,
             (message) => {
               setReceivedMessages((prev) => [...prev, `接收: ${message}`]);
             },
           );
-          bluetoothManager.addMonitorSubscription(deviceId, subscription);
         } else {
           console.log("未找到设备");
           router.back();
@@ -103,9 +102,6 @@ export default function DeviceScreen() {
       console.log("开始断开设备连接:", device.name);
       await device.cancelConnection();
       console.log("设备已断开连接");
-      // 清理该设备的所有监听器
-      bluetoothManager.removeDeviceMonitors(device.id);
-      console.log("已清理设备监听器");
       setIsConnected(false);
       router.back();
     } catch (error) {
