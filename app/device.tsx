@@ -5,7 +5,7 @@ import { bleManager, bluetoothManager } from "@/lib/bluetooth/manager";
 import { Ionicons } from "@expo/vector-icons";
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useState } from "react";
-import { StyleSheet, TextInput, View } from "react-native";
+import { Alert, StyleSheet, TextInput, View } from "react-native";
 import { Device } from "react-native-ble-plx";
 
 export default function DeviceScreen() {
@@ -14,6 +14,7 @@ export default function DeviceScreen() {
   const [isConnected, setIsConnected] = useState(false);
   const [message, setMessage] = useState("");
   const [receivedMessages, setReceivedMessages] = useState<string[]>([]);
+  const [isReading, setIsReading] = useState(false);
 
   // 检查连接状态
   const checkConnection = async () => {
@@ -71,13 +72,11 @@ export default function DeviceScreen() {
         if (device) {
           // 设置设备
           setDevice(device);
-          // 设置通知监听
-          const subscription = await bluetoothManager.readMessage(
-            device,
-            (message) => {
-              setReceivedMessages((prev) => [...prev, `接收: ${message}`]);
-            },
-          );
+          await bluetoothManager.retrieveAllServicesAndCharacteristics(device);
+          //设置通知监听,接收20字节内的数据
+          await bluetoothManager.onMessageNotify(device, (message) => {
+            setReceivedMessages((prev) => [...prev, `接收: ${message}`]);
+          });
         } else {
           console.log("未找到设备");
           router.back();
@@ -93,20 +92,19 @@ export default function DeviceScreen() {
 
   // 断开连接
   const disconnectDevice = async () => {
-    if (!device) {
-      console.log("没有设备需要断开连接");
-      return;
-    }
-
     try {
-      console.log("开始断开设备连接:", device.name);
-      await device.cancelConnection();
-      console.log("设备已断开连接");
-      setIsConnected(false);
-      router.back();
+      if (device) {
+        // 取消订阅
+        //bluetoothManager.cancelSubscriptions(device.id);
+        // 断开连接
+        await device.cancelConnection();
+        setDevice(null);
+        setReceivedMessages([]);
+        console.log("成功", "设备已断开连接");
+      }
     } catch (error) {
       console.error("断开连接失败:", error);
-      alert("断开连接失败: " + (error as Error).message);
+      Alert.alert("错误", "断开连接失败");
     }
   };
 
