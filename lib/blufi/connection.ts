@@ -107,20 +107,32 @@ class Connection {
     private eventBus: EventBus = new EventBus();
     private resolves: Map<number, () => void> = new Map();
     private subscription?: Subscription;
-    private fragmentBuffer: Buffer = Buffer.alloc(0);
+    private fragmentFrame: Frame | null = null;
+    private fragmentOffset: number = 0;
+    private payloadSize: number = 20;
 
     constructor(private readonly device: Device, private config: ConnectionConfig) {
         this._id = device.id;
         this._name = device.name || "Unknown";
     }
 
+    /*         
+    MTU = 23 字节 是 BLE 4.0 / 4.1 的默认值，其有效载荷（实际可用的用户数据）取决于协议层的开销：
+    ATT 层（Attribute Protocol）：
+    写操作（Write Request / Command）：有效载荷 ≤ 20 字节（因 ATT 头占 3 字节）
+    读操作（Read Response）：有效载荷 ≤ 22 字节（因 ATT 头仅占 1 字节）
+    BLE5.0+:247字节
+    */
     public async init(): Promise<void> {
         this.subscription = await this.initMessageCallback();
         //todo：设置mtu
-        //await this.device.requestMTU(256);
+        //await this.device.requestMTU(247);
+        //Three bytes BLE header, one byte reserved
+        this.payloadSize = this.device.mtu - 4;
     }
 
     private async initMessageCallback(): Promise<Subscription> {
+        //此处的frame是完整的帧，而不是分片帧
         const subscription = await this.onMessageNotify((message: Frame) => {
             if (message.frameType === FrameType.DATA) {
                 if (message.frameControl.isRequireAck()) {
@@ -390,9 +402,6 @@ class Connection {
 
 
     /**
-     * TODO: 1.需要解析收到的数据为结构化对象，然后回掉给注册的回调函数 设置默认回调函数
-     *       2.可以在创建连接后注册回调函数，参数为解析好的对象
-     *       3.后续改为private
      * 监听消息通知
      * 用于设置通知监听
      * ESP32 可以主动发送数据（使用 notify()）
@@ -420,14 +429,30 @@ class Connection {
                     FrameCodec.logHex("receive message", decodedValue);
                     const frame = FrameCodec.decode(decodedValue);
                     console.log(new Date().toISOString(), " receive message:", JSON.stringify(frame));
-                    callback(frame);
+                    //合并分片数据组成完整消息然后再触发回调
+                    if (this.fragmentFrame === null) {
+                        if (frame.frameControl.hasFragment()) {
+                            const totalLength = frame.data.readUInt16LE(0);
+                            const buffer = Buffer.alloc(totalLength);
+                            this.fragmentOffset += frame.data.copy(buffer, 0, 2);
+                            this.fragmentFrame = frame;
+                            this.fragmentFrame.length = totalLength;
+                            this.fragmentFrame.data = buffer;
+                        } else {
+                            callback(frame);
+                        }
+                    } else {
+                        this.fragmentOffset += frame.data.copy(this.fragmentFrame.data, this.fragmentOffset, 0);
+                        if (this.fragmentOffset === this.fragmentFrame.length) {
+                            callback(this.fragmentFrame);
+                            this.fragmentFrame = null;
+                            this.fragmentOffset = 0;
+                        }
+                    }
                 }
             }
         );
         return subscription;
-        // 存储订阅
-        //TODO: 需要取消订阅
-        //this.subscriptions.set(device.id, subscription);
     }
 
     /**

@@ -32,9 +32,6 @@ class FrameCodec {
         const frameType = buffer.readUInt8(0) & 0x03;
         const subType = (buffer.readUInt8(0) >> 2) & 0x3f;
         const frameControl = new FrameControl(buffer.readUInt8(1));
-        // if (frameControl.hasFragment()) {
-        //     throw new Error("fragment not supported");
-        // }
         if (frameControl.isEncrypted()) {
             throw new Error("encrypted not supported");
         }
