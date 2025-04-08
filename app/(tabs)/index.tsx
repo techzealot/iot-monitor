@@ -1,7 +1,7 @@
 import { Box } from "@/components/ui/box";
 import { Button, ButtonText } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
-import { bleManager, bluetoothManager } from "@/lib/bluetooth/manager";
+import { connectionManager } from "@/lib/blufi/connection";
 import { router } from "expo-router";
 import { useCallback, useState } from "react";
 import { FlatList, StyleSheet } from "react-native";
@@ -43,21 +43,18 @@ export default function TabOneScreen() {
     try {
       if (isScanning) {
         // 如果正在扫描，则停止扫描
-        bleManager.stopDeviceScan();
+        connectionManager.stopDeviceScan();
         setIsScanning(false);
         return;
       }
 
       // 断开所有已连接设备
-      const connectedDevices = await bluetoothManager.getConnectedDevices();
-      for (const device of connectedDevices) {
-        await device.cancelConnection();
-      }
+      connectionManager.disconnectAll();
 
       // 开始扫描
       setIsScanning(true);
 
-      await bleManager.startDeviceScan(
+      await connectionManager.startDeviceScan(
         null,
         { allowDuplicates: false },
         (error, device) => {
@@ -86,7 +83,7 @@ export default function TabOneScreen() {
 
       // 10秒后自动停止扫描
       setTimeout(() => {
-        bleManager.stopDeviceScan();
+        connectionManager.stopDeviceScan();
         setIsScanning(false);
       }, 10000);
     } catch (error) {
@@ -99,15 +96,9 @@ export default function TabOneScreen() {
   const connectDevice = async (device: Device) => {
     try {
       // 停止扫描
-      bleManager.stopDeviceScan();
-
-      // 连接设备
-      await bleManager.connectToDevice(device.id);
-      console.log("设备已连接:", device.name);
-
+      connectionManager.stopDeviceScan();
       // 更新已连接设备列表
       setConnectedDeviceIds((prev) => [...prev, device.id]);
-
       // 导航到设备页面
       router.push(`/device?deviceId=${device.id}`);
     } catch (error) {
@@ -120,12 +111,7 @@ export default function TabOneScreen() {
   const disconnectDevice = async (device: Device) => {
     try {
       console.log("正在断开设备连接:", device.id);
-      if (await device.isConnected()) {
-        // 断开连接
-        await device.cancelConnection();
-        console.log("设备已断开连接:", device.name);
-      }
-
+      connectionManager.disconnect(device.id);
       // 更新已连接设备列表
       setConnectedDeviceIds((prev) => prev.filter((id) => id !== device.id));
     } catch (error) {
@@ -136,7 +122,7 @@ export default function TabOneScreen() {
 
   // 渲染设备列表项
   const renderItem = ({ item: device }: { item: Device }) => {
-    const isConnected = connectedDeviceIds.includes(device.id);
+    const isConnected = false;
 
     return (
       <Box

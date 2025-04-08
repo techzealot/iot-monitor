@@ -1,12 +1,12 @@
 import { Box } from "@/components/ui/box";
 import { Button, ButtonText } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
-import { bluetoothManager } from "@/lib/bluetooth/manager";
+import { Connection, connectionManager } from "@/lib/blufi/connection";
+import { CtrlFrameSubType } from "@/lib/blufi/frame";
 import { Ionicons } from "@expo/vector-icons";
 import { router, Stack } from "expo-router";
 import React, { useEffect, useState } from "react";
 import { FlatList, StyleSheet, TextInput, View } from "react-native";
-import { Device } from "react-native-ble-plx";
 
 interface Message {
   deviceId: string;
@@ -17,42 +17,19 @@ interface Message {
 }
 
 export default function NetworkScreen() {
-  const [connectedDevices, setConnectedDevices] = useState<Device[]>([]);
+  const [connections, setConnections] = useState<Connection[]>([]);
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
 
   // 加载已连接设备
   const loadConnectedDevices = async () => {
     try {
-      const devices = await bluetoothManager.getConnectedDevices();
-
-      if (devices.length > 0) {
-        // 为每个设备设置通知监听
-        for (const device of devices) {
-          await setupDeviceNotification(device);
-        }
-      }
-      setConnectedDevices(devices);
+      const connections = connectionManager.getConnections();
+      setConnections(connections);
     } catch (error) {
       console.error("加载已连接设备失败:", error);
-      setConnectedDevices([]);
+      setConnections([]);
     }
-  };
-
-  // 设置设备的通知监听
-  const setupDeviceNotification = async (device: Device) => {
-    return bluetoothManager.onMessageReceived(device, (message) => {
-      setMessages((prev) => [
-        ...prev,
-        {
-          deviceId: device.id,
-          deviceName: device.name || "未知设备",
-          content: message,
-          timestamp: Date.now(),
-          isFromDevice: true,
-        },
-      ]);
-    });
   };
 
   useEffect(() => {
@@ -61,26 +38,28 @@ export default function NetworkScreen() {
     return () => {
       console.log("NetworkScreen unmounted");
       // 清理所有监听器和连接
-      connectedDevices.forEach((device) => {
-        device.cancelConnection(); // 断开连接时会自动清理监听器
+      connections.forEach((connection) => {
+        connection.close(); // 断开连接时会自动清理监听器
       });
     };
   }, []);
 
   // 发送消息到所有设备
   const sendMessageToAll = async () => {
-    if (!message.trim() || connectedDevices.length === 0) return;
+    if (!message.trim() || connections.length === 0) return;
 
     try {
       // 遍历所有已连接设备
-      for (const device of connectedDevices) {
-        await bluetoothManager.sendMessage(device, message);
+      for (const connection of connections) {
+        await connection.sendNonAckCtrlFrame(
+          CtrlFrameSubType.SUBTYPE_GET_VERSION,
+        );
         // 添加发送的消息到列表
         setMessages((prev) => [
           ...prev,
           {
-            deviceId: device.id,
-            deviceName: device.name || "未知设备",
+            deviceId: connection.id,
+            deviceName: connection.name || "未知设备",
             content: message,
             timestamp: Date.now(),
             isFromDevice: false,
@@ -96,18 +75,18 @@ export default function NetworkScreen() {
   };
 
   // 渲染设备列表项
-  const renderDeviceItem = ({ item: device }: { item: Device }) => {
+  const renderDeviceItem = ({ item: connection }: { item: Connection }) => {
     return (
       <Box
         className="mr-2 items-center justify-center rounded bg-white px-3 py-2"
         style={styles.deviceItem}
         onTouchEnd={() => {
-          console.log("导航到设备页面:", device.name);
-          router.push(`/device?deviceId=${device.id}`);
+          console.log("导航到设备页面:", connection.name);
+          router.push(`/device?deviceId=${connection.id}`);
         }}
       >
         <Text className="text-base">
-          {device.name || "未知设备"} ({device.id.slice(0, 6)})
+          {connection.name || "未知设备"} ({connection.id.slice(0, 6)})
         </Text>
       </Box>
     );
@@ -156,13 +135,13 @@ export default function NetworkScreen() {
         {/* 已连接设备列表 */}
         <Box className="mb-2 flex-row items-center justify-between">
           <Text className="text-base font-bold">
-            已连接设备 ({connectedDevices.length})
+            已连接设备 ({connections.length})
           </Text>
           <Text className="text-sm text-gray-500">左右滑动查看更多</Text>
         </Box>
         <Box className="mb-2" style={styles.deviceList}>
           <FlatList
-            data={connectedDevices}
+            data={connections}
             renderItem={renderDeviceItem}
             keyExtractor={(item) => item.id}
             horizontal={true}
