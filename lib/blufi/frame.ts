@@ -2,7 +2,15 @@ import { crc16 } from "@/lib/blufi/utils";
 import { Buffer } from "@craftzdog/react-native-buffer";
 import { EventData } from "./eventbus";
 
+/**
+ * 底层帧编码器，不处理帧分片与帧合并
+ */
 class FrameCodec {
+    /**
+     * 编码帧
+     * @param frame 
+     * @returns 
+     */
     public static encode(frame: Frame): Buffer {
         //1+1+1+1+{data length}+2
         const buffer = Buffer.alloc(6 + frame.length);
@@ -17,7 +25,6 @@ class FrameCodec {
         this.logHex("length", buffer);
         this.logHex("data", frame.data);
         frame.data.copy(buffer, 4);
-        //todo:需要处理大于MTU时数据分片，可以返回buffer数组
         this.logHex("data copy", buffer);
         buffer.writeUInt16LE(frame.checksum, 4 + frame.length);
         this.logHex("checksum", buffer);
@@ -37,11 +44,6 @@ class FrameCodec {
         }
         const sequence = buffer.readUInt8(2);
         const length = buffer.readUInt8(3);
-        if (frameControl.hasFragment()) {
-
-        } else {
-
-        }
         const data = buffer.slice(4, 4 + length);
         let receivedChecksum = 0;
         if (frameControl.isChecksum()) {
@@ -201,13 +203,13 @@ class FrameControl {
      * 安信可暂不支持加密
      * @returns 
      */
-    public static buildDefaultOutput(isRequireAck: boolean = true): FrameControl {
+    public static buildDefaultOutput({ isRequireAck = true, isEncrypted = false, hasFragment = false } = {}): FrameControl {
         return FrameControl.build({
-            isEncrypted: false,
+            isEncrypted,
             isChecksum: true,
             dataDirection: DataDirection.OUTPUT,
             isRequireAck,
-            hasFragment: false,
+            hasFragment,
         });
     }
 

@@ -7,7 +7,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function RootLayout() {
   return (
-    <SafeAreaView className="h-[98%]">
+    <SafeAreaView className="h-full">
       <GluestackUIProvider mode="light">
         <Stack>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />

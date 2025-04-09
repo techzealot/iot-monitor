@@ -110,6 +110,7 @@ class Connection {
     private fragmentFrame: Frame | null = null;
     private fragmentOffset: number = 0;
     private payloadSize: number = 20;
+    private _receivedSequence: number = -1;
 
     constructor(private readonly device: Device, private config: ConnectionConfig) {
         this._id = device.id;
@@ -128,7 +129,9 @@ class Connection {
         //todo：设置mtu
         //await this.device.requestMTU(247);
         //Three bytes BLE header, one byte reserved
-        this.payloadSize = this.device.mtu - 4;
+        //blufi 协议除数据帧外，其他帧长度最大为6字节
+        this.payloadSize = this.device.mtu - 3 - 1 - 6;
+        console.log("payloadSize:", this.payloadSize);
     }
 
     private async initMessageCallback(): Promise<Subscription> {
@@ -242,7 +245,7 @@ class Connection {
     public async sendAckCtrlFrame(ackedSequence: number): Promise<void> {
         const data = Buffer.alloc(2);
         data.writeUInt8(ackedSequence, 0);
-        const frame = this.buildCtrlFrame(CtrlFrameSubType.SUBTYPE_ACK, data, false);
+        const frame = this.buildCtrlFrame(CtrlFrameSubType.SUBTYPE_ACK, data, { isRequireAck: false });
         await this.sendMessage(frame);
     }
 
@@ -290,8 +293,11 @@ class Connection {
     //-------------send data frame start-------------
 
     private async sendDataFrame(subType: DataFrameSubType, data: Buffer): Promise<void> {
-        const frame = this.buildDataFrame(subType, data);
-        await this.sendMessage(frame);
+        const frames = this.buildDataFrame(subType, data);
+        console.log("send data frame:", JSON.stringify(frames));
+        for (const frame of frames) {
+            await this.sendMessage(frame);
+        }
     }
 
     public async sendNegotiateDataFrame(data: Buffer): Promise<void> {
@@ -429,6 +435,9 @@ class Connection {
                     FrameCodec.logHex("receive message", decodedValue);
                     const frame = FrameCodec.decode(decodedValue);
                     console.log(new Date().toISOString(), " receive message:", JSON.stringify(frame));
+                    if (frame.sequence < this.nextReceivedSequence()) {
+                        throw new Error(`received sequence: [${frame.sequence}] not goes up than expected: [${this.receivedSequence}]`);
+                    }
                     //合并分片数据组成完整消息然后再触发回调
                     if (this.fragmentFrame === null) {
                         if (frame.frameControl.hasFragment()) {
@@ -438,15 +447,22 @@ class Connection {
                             this.fragmentFrame = frame;
                             this.fragmentFrame.length = totalLength;
                             this.fragmentFrame.data = buffer;
+                            this.fragmentFrame.checksum = 0;
                         } else {
                             callback(frame);
                         }
                     } else {
-                        this.fragmentOffset += frame.data.copy(this.fragmentFrame.data, this.fragmentOffset, 0);
+                        if (frame.frameControl.hasFragment()) {
+                            this.fragmentOffset += frame.data.copy(this.fragmentFrame.data, this.fragmentOffset, 2);
+                        } else {
+                            this.fragmentOffset += frame.data.copy(this.fragmentFrame.data, this.fragmentOffset, 0);
+                        }
                         if (this.fragmentOffset === this.fragmentFrame.length) {
                             callback(this.fragmentFrame);
                             this.fragmentFrame = null;
                             this.fragmentOffset = 0;
+                        } else if (this.fragmentOffset > this.fragmentFrame.length) {
+                            throw new Error("fragment frame state error");
                         }
                     }
                 }
@@ -507,14 +523,34 @@ class Connection {
         return this.sequence++;
     }
 
-    private buildCtrlFrame(subType: CtrlFrameSubType, data: Buffer, isRequireAck: boolean = true): CtrlFrame {
+    public get receivedSequence() {
+        return this._receivedSequence;
+    }
+
+    public set receivedSequence(value: number) {
+        this._receivedSequence = value & 0xff;
+    }
+
+    public nextReceivedSequence() {
+        return this.receivedSequence++;
+    }
+
+    /**
+     * 构建控制帧
+     * 控制帧长度不会超过mtu，因此不用处理分片
+     * @param subType 子类型
+     * @param data 数据
+     * @param isRequireAck 是否需要ACK
+     * @returns 控制帧
+     */
+    private buildCtrlFrame(subType: CtrlFrameSubType, data: Buffer, { isRequireAck = true, isEncrypted = false } = {}): CtrlFrame {
         const sequence = this.nextSequence();
-        const frameControl = FrameControl.buildDefaultOutput(isRequireAck);
+        const frameControl = FrameControl.buildDefaultOutput({ isRequireAck, isEncrypted });
         if (frameControl.hasFragment()) {
-            throw new Error("fragment not supported");
+            throw new Error("ctrl frame fragment not supported");
         }
         if (frameControl.isEncrypted()) {
-            throw new Error("encrypted not supported");
+            throw new Error("ctrl frame encrypted not supported");
         }
         return createCtrlFrame({
             subType,
@@ -526,23 +562,58 @@ class Connection {
         });
     }
 
-    public buildDataFrame(subType: DataFrameSubType, data: Buffer): DataFrame {
-        const sequence = this.nextSequence();
-        const frameControl = FrameControl.buildDefaultOutput();
-        if (frameControl.hasFragment()) {
-            throw new Error("fragment not supported");
+    /**
+     * 构建数据帧,处理分片问题
+     * 对于分片数据,除了最后一个分片,其他分片都需要设置hasFragment=true,而且数据=totalLen+part
+     * @param subType 子类型
+     * @param data 数据
+     * @param isRequireAck 是否需要ACK
+     * @param isEncrypted 是否加密
+     * @returns 数据帧
+     */
+    public buildDataFrame(subType: DataFrameSubType, data: Buffer, { isRequireAck = true, isEncrypted = false }: { isRequireAck?: boolean, isEncrypted?: boolean } = {}): DataFrame[] {
+        if (isEncrypted) {
+            throw new Error("encrypted not supported now");
         }
-        if (frameControl.isEncrypted()) {
-            throw new Error("encrypted not supported");
+        const frames: DataFrame[] = [];
+        if (data.length <= this.payloadSize) {
+            const sequence = this.nextSequence();
+            frames.push(createDataFrame({
+                subType,
+                frameControl: FrameControl.buildDefaultOutput({ hasFragment: false, isRequireAck, isEncrypted }),
+                sequence: sequence,
+                length: data.length,
+                data: data,
+                checksum: checksum(sequence, data.length, data),
+            }));
+            return frames;
         }
-        return createDataFrame({
-            subType,
-            frameControl,
-            sequence: sequence,
-            length: data.length,
-            data: data,
-            checksum: checksum(sequence, data.length, data),
-        });
+        const totalLength = data.length;
+        //读指针,当且仅当读取数据时才移动指针,totalLength不算
+        let offset = 0;
+        while (offset < totalLength) {
+            const sequence = this.nextSequence();
+            let buffer: Buffer;
+            let hasFragment = false;
+            if (offset + this.payloadSize >= totalLength) {
+                buffer = data.slice(offset, totalLength);
+                offset += buffer.length;
+            } else {
+                hasFragment = true;
+                buffer = Buffer.alloc(this.payloadSize);
+                buffer.writeUInt16LE(totalLength - offset, 0);
+                offset += data.copy(buffer, 2, offset, offset + this.payloadSize - 2);
+            }
+            frames.push(createDataFrame({
+                subType,
+                frameControl: FrameControl.buildDefaultOutput({ hasFragment, isRequireAck, isEncrypted }),
+                sequence: sequence,
+                length: buffer.length,
+                data: buffer,
+                checksum: checksum(sequence, buffer.length, buffer),
+            }));
+        }
+        return frames;
     }
 
     public onReceiveVersion(callback: (data: { greatVersion: number, subVersion: number }) => void): Connection {

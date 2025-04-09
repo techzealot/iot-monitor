@@ -257,6 +257,16 @@ export default function DeviceScreen() {
     }
   };
 
+  const handleDisconnectWifi = async () => {
+    try {
+      await connection?.sendDisconnectWifiCtrlFrame();
+      setReceivedMessages((prev) => [...prev, `发送: 断开WiFi连接`]);
+    } catch (error) {
+      console.error("断开WiFi连接失败:", error);
+      alert("断开WiFi连接失败: " + (error as Error).message);
+    }
+  };
+
   return (
     <Box className="flex-1">
       <Stack.Screen
@@ -362,10 +372,10 @@ export default function DeviceScreen() {
             <Button
               variant="solid"
               className={`flex-1 ${isConnected ? "bg-blue-500" : "bg-gray-400"}`}
-              onPress={disconnectBle}
+              onPress={handleDisconnectWifi}
               disabled={!isConnected}
             >
-              <ButtonText>断开</ButtonText>
+              <ButtonText>断网</ButtonText>
             </Button>
           </View>
         </View>
