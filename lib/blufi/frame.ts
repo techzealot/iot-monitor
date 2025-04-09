@@ -481,14 +481,15 @@ function decodeDataFrameDataPart<T extends DataFrameSubType>(subType: T, data: B
             } as EventData[T];
         case DataFrameSubType.SUBTYPE_WIFI_LIST:
             const wifiList: EventData[DataFrameSubType.SUBTYPE_WIFI_LIST] = [];
+            //wifi列表数据格式:data=length(1byte)+rssi(1byte)+ssid(length-1byte),其中length表示后面两个字段的总长度
             let offset = 0;
             while (offset < data.length) {
-                const ssidLength = data.readUInt8(offset);
+                const length = data.readUInt8(offset);
                 offset++;
-                const ssid = data.slice(offset, offset + ssidLength).toString('utf8');
-                offset += ssidLength;
                 const rssi = data.readInt8(offset);
                 offset++;
+                const ssid = data.slice(offset, offset + length - 1).toString('utf8');
+                offset += length - 1;
                 wifiList.push({ ssid, rssi });
             }
             return wifiList as EventData[T];

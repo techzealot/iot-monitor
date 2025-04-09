@@ -68,13 +68,14 @@ type UnimplementedEventData = Record<
     | DataFrameSubType.SUBTYPE_SERVER_CERTIFICATION
     | DataFrameSubType.SUBTYPE_CLIENT_PRIVATE_KEY
     | DataFrameSubType.SUBTYPE_SERVER_PRIVATE_KEY,
+    //可以添加其他事件类型,注意不要与已实现的数值枚举冲突
     never
 >;
 
 // 合并所有事件类型
 export type EventData = ImplementedEventData & UnimplementedEventData;
 
-export class EventSubscription<T extends DataFrameSubType> {
+export class EventSubscription<T extends keyof EventData> {
     constructor(
         private event: T,
         private callback: EventCallback<EventData[T]>,
@@ -90,7 +91,7 @@ export class EventSubscription<T extends DataFrameSubType> {
 }
 
 export class EventBus {
-    private listeners: Map<DataFrameSubType, Set<EventCallback>> = new Map();
+    private listeners: Map<keyof EventData, Set<EventCallback<any>>> = new Map();
 
     /**
      * 订阅事件
@@ -98,7 +99,7 @@ export class EventBus {
      * @param callback 回调函数
      * @returns 订阅对象，用于取消订阅
      */
-    on<T extends DataFrameSubType>(event: T, callback: EventCallback<EventData[T]>): EventSubscription<T> {
+    on<T extends keyof EventData>(event: T, callback: EventCallback<EventData[T]>): EventSubscription<T> {
         if (!this.listeners.has(event)) {
             this.listeners.set(event, new Set());
         }
@@ -111,7 +112,7 @@ export class EventBus {
      * @param event 事件类型
      * @param callback 回调函数
      */
-    un<T extends DataFrameSubType>(event: T, callback: EventCallback<EventData[T]>): void {
+    un<T extends keyof EventData>(event: T, callback: EventCallback<EventData[T]>): void {
         const callbacks = this.listeners.get(event);
         if (callbacks) {
             callbacks.delete(callback);
@@ -123,7 +124,7 @@ export class EventBus {
      * @param event 事件类型
      * @param data 事件数据
      */
-    emit<T extends DataFrameSubType>(event: T, data: EventData[T]): void {
+    emit<T extends keyof EventData>(event: T, data: EventData[T]): void {
         const callbacks = this.listeners.get(event);
         if (!callbacks || callbacks.size == 0) {
             console.warn(`事件${event}没有监听器,data:${JSON.stringify(data)}`);
@@ -143,7 +144,7 @@ export class EventBus {
      * 清除指定事件的所有监听器
      * @param event 事件类型
      */
-    clearEvent(event: DataFrameSubType): void {
+    clearEvent(event: keyof EventData): void {
         this.listeners.delete(event);
     }
 } 

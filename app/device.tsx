@@ -15,7 +15,7 @@ import { Buffer } from "@craftzdog/react-native-buffer";
 import { Ionicons } from "@expo/vector-icons";
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
-import { Alert, StyleSheet, View } from "react-native";
+import { Alert, ScrollView, StyleSheet, View } from "react-native";
 
 export default function DeviceScreen() {
   const { deviceId } = useLocalSearchParams<{ deviceId: string }>();
@@ -300,13 +300,17 @@ export default function DeviceScreen() {
         </Text>
 
         {/* 消息列表 */}
-        <Box className="mb-4 flex-1" style={styles.messageList}>
+        <ScrollView
+          className="mb-4 flex-1"
+          style={styles.messageList}
+          contentContainerStyle={{ paddingBottom: 10 }} // Optional padding for the bottom
+        >
           {receivedMessages.map((msg, index) => (
             <Text key={index} className="mb-1 text-sm">
               {msg}
             </Text>
           ))}
-        </Box>
+        </ScrollView>
 
         {/* 发送消息区域 */}
         <View style={styles.inputContainer}>

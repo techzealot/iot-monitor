@@ -143,6 +143,7 @@ class Connection {
                         console.error('发送ACK失败:', error);
                     });
                 }
+                console.log("receive complete data frame:", JSON.stringify(message));
                 switch (message.subType) {
                     case DataFrameSubType.SUBTYPE_VERSION:
                         this.eventBus.emit(DataFrameSubType.SUBTYPE_VERSION, decodeData(DataFrameSubType.SUBTYPE_VERSION, message.data));
@@ -294,7 +295,6 @@ class Connection {
 
     private async sendDataFrame(subType: DataFrameSubType, data: Buffer): Promise<void> {
         const frames = this.buildDataFrame(subType, data);
-        console.log("send data frame:", JSON.stringify(frames));
         for (const frame of frames) {
             await this.sendMessage(frame);
         }
