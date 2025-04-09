@@ -1,5 +1,6 @@
 import { Box } from "@/components/ui/box";
 import { Button, ButtonText } from "@/components/ui/button";
+import { ChevronDownIcon } from "@/components/ui/icon";
 import { Input, InputField } from "@/components/ui/input";
 import {
   Modal,
@@ -9,6 +10,19 @@ import {
   ModalFooter,
   ModalHeader,
 } from "@/components/ui/modal";
+import {
+  Select,
+  SelectDragIndicator,
+  SelectDragIndicatorWrapper,
+  SelectIcon,
+  SelectInput,
+  SelectItem,
+  SelectBackdrop as SelectModalBackdrop,
+  SelectContent as SelectModalContent,
+  SelectPortal,
+  SelectTrigger,
+} from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
 import { Text } from "@/components/ui/text";
 import { Connection, connectionManager } from "@/lib/blufi/connection";
 import { Buffer } from "@craftzdog/react-native-buffer";
@@ -28,6 +42,10 @@ export default function DeviceScreen() {
   const [ssid, setSsid] = useState("");
   const [password, setPassword] = useState("");
   const [customData, setCustomData] = useState("");
+  const [wifiList, setWifiList] = useState<{ ssid: string; rssi: number }[]>(
+    [],
+  );
+  const [loadingWifiList, setLoadingWifiList] = useState(false);
 
   const getConnection = useCallback(() => {
     return connectionManager.getConnection(deviceId);
@@ -53,6 +71,8 @@ export default function DeviceScreen() {
           ...prev,
           `收到Wi-Fi列表: ${JSON.stringify(data)}`,
         ]);
+        setWifiList(data);
+        setLoadingWifiList(false);
       })
       .onReceiveWifiConnectionState((data) => {
         setReceivedMessages((prev) => [
@@ -206,9 +226,35 @@ export default function DeviceScreen() {
     }
   };
 
+  const handleOpenConfigModal = async () => {
+    setWifiList([]);
+    setSsid("");
+    setPassword("");
+    setLoadingWifiList(true);
+    setShowConfigModal(true);
+    try {
+      if (!connection || !(await connection.isConnected())) {
+        alert("请先连接设备");
+        setShowConfigModal(false);
+        setLoadingWifiList(false);
+        return;
+      }
+      await connection?.sendGetWifiListCtrlFrame();
+      setReceivedMessages((prev) => [...prev, `发送: 获取Wi-Fi列表`]);
+    } catch (error) {
+      console.error("发送获取Wi-Fi列表命令失败:", error);
+      alert("获取Wi-Fi列表失败: " + (error as Error).message);
+      setShowConfigModal(false);
+      setLoadingWifiList(false);
+    }
+  };
+
   const handleConfigWifi = async () => {
     try {
-      //仅配置ssid和pwd，联网动作在handleConnectWifi中
+      if (!ssid) {
+        alert("请先选择一个WiFi网络");
+        return;
+      }
       await connection?.sendStaWifiSsidDataFrame(ssid);
       await connection?.sendStaWifiPasswordDataFrame(password);
       setReceivedMessages((prev) => [
@@ -218,6 +264,8 @@ export default function DeviceScreen() {
       setShowConfigModal(false);
       setSsid("");
       setPassword("");
+      setWifiList([]);
+      setLoadingWifiList(false);
     } catch (error) {
       console.error("配置WiFi失败:", error);
       alert("配置WiFi失败: " + (error as Error).message);
@@ -334,15 +382,7 @@ export default function DeviceScreen() {
             <Button
               variant="solid"
               className={`mr-2 flex-1 ${isConnected ? "bg-blue-500" : "bg-gray-400"}`}
-              onPress={getWifiList}
-              disabled={!isConnected}
-            >
-              <ButtonText>扫描</ButtonText>
-            </Button>
-            <Button
-              variant="solid"
-              className={`flex-1 ${isConnected ? "bg-blue-500" : "bg-gray-400"}`}
-              onPress={() => setShowConfigModal(true)}
+              onPress={handleOpenConfigModal}
               disabled={!isConnected}
             >
               <ButtonText>配网</ButtonText>
@@ -386,20 +426,87 @@ export default function DeviceScreen() {
       </Box>
 
       {/* 配网对话框 */}
-      <Modal isOpen={showConfigModal} onClose={() => setShowConfigModal(false)}>
+      <Modal
+        isOpen={showConfigModal}
+        onClose={() => {
+          setShowConfigModal(false);
+          setWifiList([]);
+          setLoadingWifiList(false);
+        }}
+      >
         <ModalBackdrop />
         <ModalContent>
           <ModalHeader>
             <Text className="text-lg font-bold">配置WiFi</Text>
           </ModalHeader>
           <ModalBody>
-            <Input className="mb-4">
-              <InputField
-                placeholder="WiFi名称"
-                value={ssid}
-                onChangeText={setSsid}
-              />
-            </Input>
+            {loadingWifiList ? (
+              <Box className="mb-4 h-10 items-center justify-center">
+                <Spinner size="small" />
+              </Box>
+            ) : (
+              <Select
+                selectedValue={ssid}
+                onValueChange={setSsid}
+                isDisabled={wifiList.length === 0}
+                className="mb-4"
+              >
+                <SelectTrigger variant="outline" size="md">
+                  <SelectInput
+                    placeholder={
+                      wifiList.length === 0 ? "未扫描到WiFi" : "选择WiFi网络..."
+                    }
+                  />
+                  <View style={{ marginRight: 12 }}>
+                    <SelectIcon as={ChevronDownIcon} />
+                  </View>
+                </SelectTrigger>
+                <SelectPortal>
+                  <SelectModalBackdrop />
+                  <SelectModalContent>
+                    <SelectDragIndicatorWrapper>
+                      <SelectDragIndicator />
+                    </SelectDragIndicatorWrapper>
+                    {(() => {
+                      // Filter unique SSIDs before mapping
+                      const uniqueWifiMap = new Map<
+                        string,
+                        { ssid: string; rssi: number }
+                      >();
+                      wifiList.forEach((wifi) => {
+                        // If SSID not seen before, or if current RSSI is stronger than stored one
+                        if (
+                          !uniqueWifiMap.has(wifi.ssid) ||
+                          wifi.rssi >
+                            (uniqueWifiMap.get(wifi.ssid)?.rssi ?? -Infinity)
+                        ) {
+                          uniqueWifiMap.set(wifi.ssid, wifi);
+                        }
+                      });
+                      const uniqueWifiList = Array.from(uniqueWifiMap.values());
+
+                      if (uniqueWifiList.length > 0) {
+                        return uniqueWifiList.map((wifi) => (
+                          <SelectItem
+                            key={wifi.ssid}
+                            label={`${wifi.ssid} (RSSI: ${wifi.rssi})`}
+                            value={wifi.ssid}
+                          />
+                        ));
+                      } else {
+                        return (
+                          <SelectItem
+                            label="未扫描到WiFi或列表为空"
+                            value=""
+                            isDisabled={true}
+                          />
+                        );
+                      }
+                    })()}
+                  </SelectModalContent>
+                </SelectPortal>
+              </Select>
+            )}
             <Input>
               <InputField
                 placeholder="WiFi密码"
@@ -413,7 +520,11 @@ export default function DeviceScreen() {
             <Button
               variant="outline"
               className="mr-2"
-              onPress={() => setShowConfigModal(false)}
+              onPress={() => {
+                setShowConfigModal(false);
+                setWifiList([]);
+                setLoadingWifiList(false);
+              }}
             >
               <ButtonText>取消</ButtonText>
             </Button>
@@ -421,6 +532,7 @@ export default function DeviceScreen() {
               variant="solid"
               className="bg-blue-500"
               onPress={handleConfigWifi}
+              disabled={!ssid}
             >
               <ButtonText>确定</ButtonText>
             </Button>
