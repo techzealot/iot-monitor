@@ -22,7 +22,16 @@ type ImplementedEventData = {
         opMode: OpModeWithOthers;
         connectionState: ConnectionStateWithOthers;
         softApConnectedCount: number;
-        rest: Buffer;
+        rawRest: Buffer;
+        //STA相关
+        //已连接0x00
+        staSsid?: string;
+        staBssid?: string;
+        //连接中0x02
+        maxConnRetry?: number;
+        //未连接0x01,NO_IP 0x03
+        connEndReasonCode?: number;
+        connEndRssi?: number;
     };
     [DataFrameSubType.SUBTYPE_VERSION]: {
         greatVersion: number;

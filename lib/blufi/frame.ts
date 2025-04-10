@@ -16,18 +16,11 @@ class FrameCodec {
         const buffer = Buffer.alloc(6 + frame.length);
         //低2位是帧类型，高6位是子类型
         buffer.writeUInt8(frame.frameType + (frame.subType << 2), 0);
-        this.logHex("frameType", buffer);
         buffer.writeUInt8(frame.frameControl.value, 1);
-        this.logHex("frameControl", buffer);
         buffer.writeUInt8(frame.sequence, 2);
-        this.logHex("sequence", buffer);
         buffer.writeUInt8(frame.length, 3);
-        this.logHex("length", buffer);
-        this.logHex("data", frame.data);
         frame.data.copy(buffer, 4);
-        this.logHex("data copy", buffer);
         buffer.writeUInt16LE(frame.checksum, 4 + frame.length);
-        this.logHex("checksum", buffer);
         return buffer;
     }
 
@@ -468,31 +461,14 @@ function decodeDataFrameDataPart<T extends DataFrameSubType>(subType: T, data: B
                 channel: data.readUInt8(0),
             } as EventData[T];
         case DataFrameSubType.SUBTYPE_WIFI_CONNECTION_STATE:
-            return {
-                opMode: toOpMode(data.readUInt8(0)),
-                connectionState: toConnectionState(data.readUInt8(1)),
-                softApConnectedCount: data.readUInt8(2),
-                rest: data.slice(3)
-            } as EventData[T];
+            return parseWifiState(data) as EventData[T];
         case DataFrameSubType.SUBTYPE_VERSION:
             return {
                 greatVersion: data.readUInt8(0),
                 subVersion: data.readUInt8(1)
             } as EventData[T];
         case DataFrameSubType.SUBTYPE_WIFI_LIST:
-            const wifiList: EventData[DataFrameSubType.SUBTYPE_WIFI_LIST] = [];
-            //wifi列表数据格式:data=length(1byte)+rssi(1byte)+ssid(length-1byte),其中length表示后面两个字段的总长度
-            let offset = 0;
-            while (offset < data.length) {
-                const length = data.readUInt8(offset);
-                offset++;
-                const rssi = data.readInt8(offset);
-                offset++;
-                const ssid = data.slice(offset, offset + length - 1).toString('utf8');
-                offset += length - 1;
-                wifiList.push({ ssid, rssi });
-            }
-            return wifiList as EventData[T];
+            return parseWifiList(data) as EventData[T];
         case DataFrameSubType.SUBTYPE_ERROR:
             const code = data.readUInt8(0);
             return {
@@ -518,6 +494,59 @@ function decodeDataFrameDataPart<T extends DataFrameSubType>(subType: T, data: B
     }
 }
 
+/**
+ * 解析Wi-Fi列表数据
+ * 数据格式:length(1byte)+rssi(1byte)+ssid(length-1byte)
+ * @param data 
+ * @returns 
+ */
+function parseWifiList(data: Buffer): EventData[DataFrameSubType.SUBTYPE_WIFI_LIST] {
+    const wifiList: { ssid: string; rssi: number; }[] = [];
+    let offset = 0;
+    while (offset < data.length) {
+        const length = data.readUInt8(offset);
+        offset++;
+        const rssi = data.readInt8(offset);
+        offset++;
+        const ssid = data.slice(offset, offset + length - 1).toString('utf8');
+        offset += length - 1;
+        wifiList.push({ ssid, rssi });
+    }
+    return wifiList;
+}
+
+/**
+ * 解析Wi-Fi状态数据
+ * 数据格式:opMode(1byte)+connectionState(1byte)+softApConnectedCount(1byte)+rawRest(rawRest.length)
+ * @param data 
+ * @returns 
+ */
+function parseWifiState(data: Buffer): EventData[DataFrameSubType.SUBTYPE_WIFI_CONNECTION_STATE] {
+    const opMode = toOpMode(data.readUInt8(0));
+    const connectionState = toConnectionState(data.readUInt8(1));
+    const softApConnectedCount = data.readUInt8(2);
+    if (data.length <= 3) {
+        return {
+            opMode,
+            connectionState,
+            softApConnectedCount,
+            rawRest: data.slice(3),
+        };
+    }
+    const { staSsid, staBssid, maxConnRetry, connEndReasonCode, connEndRssi } = parseWifiExtraState(data.slice(3));
+    return {
+        opMode,
+        connectionState,
+        softApConnectedCount,
+        rawRest: data.slice(3),
+        staSsid,
+        staBssid,
+        maxConnRetry,
+        connEndReasonCode,
+        connEndRssi,
+    }
+}
+
 function toOpMode(value: number): OpModeWithOthers {
     if (Object.values(OpMode).includes(value)) {
         return value as OpMode;
@@ -532,10 +561,59 @@ function toConnectionState(value: number): ConnectionStateWithOthers {
     return value;
 }
 
+
+class WifiState {
+    staBssid?: string;
+    staSsid?: string;
+    maxConnRetry?: number;
+    connEndReasonCode?: number;
+    connEndRssi?: number;
+}
+
+/**
+ * 解析Wi-Fi状态数据
+ * 数据格式:infoType(1byte)+infoLength(1byte)+infoData(infoLength)
+ * @param rest data[3~]
+ * @returns 
+ */
+function parseWifiExtraState(rest: Buffer): WifiState {
+    let offset = 0;
+    const length = rest.length;
+    const result: WifiState = {};
+    while (offset < length) {
+        const infoType = rest.readUInt8(offset);
+        offset++;
+        if (offset >= length) {
+            console.warn(`error wifi state data,no enough data`);
+            break;
+        }
+        const infoLength = rest.readUInt8(offset++);
+        switch (infoType) {
+            case DataFrameSubType.SUBTYPE_STA_WIFI_BSSID:
+                result.staBssid = rest.slice(offset, offset + infoLength).toString('hex');
+                break;
+            case DataFrameSubType.SUBTYPE_STA_WIFI_SSID:
+                result.staSsid = rest.slice(offset, offset + infoLength).toString('utf8');
+                break;
+            case DataFrameSubType.SUBTYPE_WIFI_STA_MAX_CONN_RETRY:
+                result.maxConnRetry = rest.readUInt8(offset);
+                break;
+            case DataFrameSubType.SUBTYPE_WIFI_STA_CONN_END_REASON:
+                result.connEndReasonCode = rest.readUInt8(offset);
+                break;
+            case DataFrameSubType.SUBTYPE_WIFI_STA_CONN_END_RSSI:
+                result.connEndRssi = rest.readInt8(offset);
+                break;
+            default:
+                console.warn(`Unsupported infoType: ${infoType}`);
+        }
+        offset += infoLength;
+    }
+    return result;
+}
+
 export {
     AuthMode, checksum, ConnectionState, ConnectionStateWithOthers, createCtrlFrame,
     createDataFrame, CtrlFrame, CtrlFrameSubType, DataDirection, DataFrame, DataFrameSubType, decodeDataFrameDataPart as decodeData, Frame, FrameCodec, FrameControl, FrameType, isAckFrame, OpMode, OpModeWithOthers, ReportError, SecurityMode
 };
-
-
 
