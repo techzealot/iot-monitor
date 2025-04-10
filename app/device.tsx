@@ -52,7 +52,11 @@ export default function DeviceScreen() {
   }, [deviceId]);
 
   const connect = async () => {
-    const connection = await connectionManager.connect(deviceId);
+    //todo  set 23 for test,remove for production
+    const connection = await connectionManager.connect(deviceId, {
+      requestMtu: 30,
+      ackTimeout: 2000,
+    });
     connection
       .onReceiveVersion((data) => {
         setReceivedMessages((prev) => [

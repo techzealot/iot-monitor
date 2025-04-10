@@ -8,7 +8,6 @@ class ConnectionManager {
     private static instance: ConnectionManager;
     private connections: Map<string, Connection> = new Map();
     private bleManager: BleManager;
-    private defaultConfig: ConnectionConfig = { timeout: 3000 };
 
     private constructor() {
         this.bleManager = new BleManager();
@@ -34,17 +33,48 @@ class ConnectionManager {
         return ConnectionManager.instance;
     }
 
-    public async connect(deviceId: string, config: ConnectionConfig = this.defaultConfig): Promise<Connection> {
-        const device = await this.bleManager.connectToDevice(deviceId);
-        const discoveredDevice =
-            await device.discoverAllServicesAndCharacteristics();
+    /**
+     * 配置设备
+     * MTU = 23 字节 是 BLE 4.0 / 4.1 的默认值，其有效载荷（实际可用的用户数据）取决于协议层的开销：
+     * ATT 层（Attribute Protocol）：
+     * 写操作（Write Request / Command）：有效载荷 ≤ 20 字节（因 ATT 头占 3 字节）
+     * 读操作（Read Response）：有效载荷 ≤ 22 字节（因 ATT 头仅占 1 字节）
+     * BLE5.0+:247字节
+     * @param device 设备
+     * @param mtu 最大传输单元
+     * @returns 配置后的设备
+     */
+    private async configDevice(device: Device, options?: Partial<ConnectionOptions>): Promise<Device> {
+        const { requestMtu } = options || {};
+        let configedDevice = device;
+        if (requestMtu) {
+            configedDevice = await this.requestMtu(device, requestMtu);
+        }
+        return configedDevice;
+    }
 
-        const connection = new Connection(discoveredDevice, config);
-        await connection.retrieveAllServicesAndCharacteristics();
+    private async requestMtu(device: Device, mtu: number): Promise<Device> {
+        //设置mtu为允许的最大值
+        if (mtu > 247) {
+            throw new Error("mtu must be less than 247");
+        }
+        console.log(`Attempting to request MTU: ${mtu}`);
+        try {
+            return await device.requestMTU(mtu);
+        } catch (error) {
+            console.warn(`Failed to set MTU to ${mtu}. Proceeding with current MTU (${device.mtu}). Error:`, error);
+        }
+        return device;
+    }
+
+    public async connect(deviceId: string, options?: Partial<ConnectionOptions>): Promise<Connection> {
+        const device = await this.bleManager.connectToDevice(deviceId);
+        let discoveredDevice = await device.discoverAllServicesAndCharacteristics();
+        const readyDevice = await this.configDevice(discoveredDevice, options);
+        const connection = new Connection(readyDevice, options);
         await connection.init();
         console.log("bluetooth version:", await connection.getBluetoothVersion());
         console.log("device info:", await connection.getDeviceInfo());
-        //清理旧连接
         const oldConnection = this.getConnection(connection.id);
         if (oldConnection) {
             await oldConnection.close();
@@ -94,10 +124,21 @@ class ConnectionManager {
 
 }
 
-interface ConnectionConfig {
-    timeout: number;
+// 定义新的 ConnectionOptions 接口和默认值
+interface ConnectionOptions {
+    /** ACK 确认超时时间 (毫秒) */
+    ackTimeout?: number;
+    /** 尝试请求的 MTU 大小 (例如 247) */
+    requestMtu?: number;
+    // 这里可以添加未来的配置项，例如：
+    // debugLogging?: boolean;
 }
 
+// 默认值不包含 requestMtu，表示默认不主动请求特定 MTU
+const defaultConnectionOptions: { ackTimeout: number; requestMtu: number | undefined } = {
+    ackTimeout: 3000,
+    requestMtu: 247,
+};
 
 class Connection {
     private _id: string;
@@ -110,27 +151,22 @@ class Connection {
     private fragmentOffset: number = 0;
     private payloadSize: number = 20;
     private _receivedSequence: number = -1;
+    private readonly _options: ConnectionOptions; // 存储合并后的完整配置
 
-    constructor(private readonly device: Device, private config: ConnectionConfig) {
+    // 构造函数接收可选的配置项，移除旧的 config 参数
+    constructor(private readonly device: Device, options?: Partial<ConnectionOptions>) {
         this._id = device.id;
         this._name = device.name || "Unknown";
+        // 合并默认配置和传入的配置
+        this._options = { ...defaultConnectionOptions, ...options };
     }
 
-    /*         
-    MTU = 23 字节 是 BLE 4.0 / 4.1 的默认值，其有效载荷（实际可用的用户数据）取决于协议层的开销：
-    ATT 层（Attribute Protocol）：
-    写操作（Write Request / Command）：有效载荷 ≤ 20 字节（因 ATT 头占 3 字节）
-    读操作（Read Response）：有效载荷 ≤ 22 字节（因 ATT 头仅占 1 字节）
-    BLE5.0+:247字节
-    */
     public async init(): Promise<void> {
-        this.subscription = await this.initMessageCallback();
-        //todo：设置mtu
-        //await this.device.requestMTU(247);
         //Three bytes BLE header, one byte reserved
-        //blufi 协议除数据帧外，其他帧长度最大为6字节
+        //blufi协议除数据帧外，其他帧长度最大为6字节
         this.payloadSize = this.device.mtu - 3 - 1 - 6;
         console.log("payloadSize:", this.payloadSize);
+        this.subscription = await this.initMessageCallback();
     }
 
     private async initMessageCallback(): Promise<Subscription> {
@@ -210,10 +246,10 @@ class Connection {
             if (frame.frameControl.isRequireAck()) {
                 console.log("map on send:", this.resolves);
                 //清理资源
-                setTimeout(() => {
+                const timeoutId = setTimeout(() => { // 保存 timeoutId (可选，用于在 close 时清除)
                     this.resolves.delete(frame.sequence);
-                    reject(new Error(`${new Date().toISOString()} ack: [${frame.sequence}] timeout ${this.config.timeout}ms`));
-                }, this.config.timeout);
+                    reject(new Error(`${new Date().toISOString()} ack: [${frame.sequence}] timeout ${this._options.ackTimeout}ms`));
+                }, this._options.ackTimeout); // 使用 this._options.ackTimeout
                 this.resolves.set(frame.sequence, resolve);
             } else {
                 resolve();
@@ -680,24 +716,18 @@ class Connection {
     }
 
     public async close() {
-        console.log(`Closing connection for device ${this._id}...`);
-
         // 0. 清理等待中的 ACK Promises
         if (this.resolves.size > 0) {
-            console.log(`Clearing ${this.resolves.size} pending ACK promises due to connection closure.`);
             this.resolves.clear();
         }
-
         // 1. 尝试移除特征监听器
         if (this.subscription) {
             try {
-                console.log(`Removing characteristic subscription for ${this._id}`);
                 this.subscription.remove();
-                console.log(`Subscription removed for ${this._id}`);
             } catch (error) {
                 // 捕获并忽略预期的 "Operation was cancelled" 错误
                 if (error instanceof BleError && error.message.includes('Operation was cancelled')) {
-                    console.log(`Subscription removal for ${this._id} was cancelled (expected during disconnection).`);
+                    console.warn(`Subscription removal for ${this._id} was cancelled (expected during disconnection).`);
                 } else {
                     // 记录其他意外错误
                     console.error(`Error removing subscription for ${this._id}:`, error);
@@ -709,7 +739,6 @@ class Connection {
         }
 
         // 2. 清理事件总线监听器
-        console.log(`Clearing event bus for ${this._id}`);
         this.eventBus.clear();
 
         // 3. 重置分片状态
@@ -719,17 +748,12 @@ class Connection {
         // 4. 断开 BLE 连接
         try {
             if (await this.device.isConnected()) {
-                console.log(`Cancelling BLE connection for ${this._id}`);
                 await this.device.cancelConnection();
-                console.log(`BLE connection cancelled for ${this._id}`);
-            } else {
-                console.log(`Device ${this._id} was already disconnected.`);
             }
         } catch (error) {
             console.error(`Error cancelling BLE connection for ${this._id}:`, error);
         }
-
-        console.log(`Connection close sequence completed for ${this._id}.`);
+        console.log(`Connection closed completed for ${this._id}.`);
     }
 
     public async getBluetoothVersion(): Promise<string> {
@@ -788,4 +812,4 @@ class Connection {
 }
 
 export const connectionManager = ConnectionManager.getInstance();
-export { Connection, ConnectionConfig };
+export { Connection, ConnectionOptions };
