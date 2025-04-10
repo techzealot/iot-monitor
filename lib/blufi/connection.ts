@@ -1,6 +1,6 @@
 import { Bluetooth } from "@/lib/blufi/constants";
 import { EventBus, EventCallback, EventData, EventSubscription } from "@/lib/blufi/eventbus";
-import { AuthMode, checksum, ConnectionState, createCtrlFrame, createDataFrame, CtrlFrame, CtrlFrameSubType, DataFrame, DataFrameSubType, decodeData, Frame, FrameCodec, FrameControl, FrameType, OpMode, SecurityMode } from "@/lib/blufi/frame";
+import { AuthMode, checksum, createCtrlFrame, createDataFrame, CtrlFrame, CtrlFrameSubType, DataFrame, DataFrameSubType, decodeData, Frame, FrameCodec, FrameControl, FrameType, OpMode, SecurityMode } from "@/lib/blufi/frame";
 import { Buffer } from "@craftzdog/react-native-buffer";
 import { BleError, BleManager, Characteristic, Device, ScanOptions, Subscription, UUID } from "react-native-ble-plx";
 
@@ -62,9 +62,8 @@ class ConnectionManager {
     }
 
     public async disconnectAll() {
-        this.connections.forEach(async (connection) => {
-            await connection.close();
-        });
+        // 使用 Promise.allSettled 等待所有 close 完成
+        await Promise.allSettled(Array.from(this.connections.values()).map(conn => conn.close()));
         this.connections.clear();
     }
 
@@ -175,6 +174,7 @@ class Connection {
                         const resolve = this.resolves.get(ackedSequence);
                         if (resolve) {
                             resolve();
+                            this.resolves.delete(ackedSequence); // 在 resolve 后删除条目
                         } else {
                             console.warn(new Date().toISOString(), ` ack: [${ackedSequence}] received but timeout`);
                         }
@@ -628,7 +628,7 @@ class Connection {
         return this;
     }
 
-    public onReceiveWifiConnectionState(callback: (data: { opMode: OpMode, connectionState: ConnectionState, softApConnectedCount: number, rest: Buffer }) => void): Connection {
+    public onReceiveWifiConnectionState(callback: (data: EventData[DataFrameSubType.SUBTYPE_WIFI_CONNECTION_STATE]) => void): Connection {
         this.eventBus.on(DataFrameSubType.SUBTYPE_WIFI_CONNECTION_STATE, callback);
         return this;
     }
@@ -680,12 +680,56 @@ class Connection {
     }
 
     public async close() {
-        if (await this.device.isConnected()) {
-            await this.device.cancelConnection();
+        console.log(`Closing connection for device ${this._id}...`);
+
+        // 0. 清理等待中的 ACK Promises
+        if (this.resolves.size > 0) {
+            console.log(`Clearing ${this.resolves.size} pending ACK promises due to connection closure.`);
+            this.resolves.clear();
         }
+
+        // 1. 尝试移除特征监听器
+        if (this.subscription) {
+            try {
+                console.log(`Removing characteristic subscription for ${this._id}`);
+                this.subscription.remove();
+                console.log(`Subscription removed for ${this._id}`);
+            } catch (error) {
+                // 捕获并忽略预期的 "Operation was cancelled" 错误
+                if (error instanceof BleError && error.message.includes('Operation was cancelled')) {
+                    console.log(`Subscription removal for ${this._id} was cancelled (expected during disconnection).`);
+                } else {
+                    // 记录其他意外错误
+                    console.error(`Error removing subscription for ${this._id}:`, error);
+                }
+            } finally {
+                // 无论成功还是失败，都清理引用
+                this.subscription = undefined;
+            }
+        }
+
+        // 2. 清理事件总线监听器
+        console.log(`Clearing event bus for ${this._id}`);
         this.eventBus.clear();
-        //TODO: 需要清理资源
-        this.subscription?.remove();
+
+        // 3. 重置分片状态
+        this.fragmentFrame = null;
+        this.fragmentOffset = 0;
+
+        // 4. 断开 BLE 连接
+        try {
+            if (await this.device.isConnected()) {
+                console.log(`Cancelling BLE connection for ${this._id}`);
+                await this.device.cancelConnection();
+                console.log(`BLE connection cancelled for ${this._id}`);
+            } else {
+                console.log(`Device ${this._id} was already disconnected.`);
+            }
+        } catch (error) {
+            console.error(`Error cancelling BLE connection for ${this._id}:`, error);
+        }
+
+        console.log(`Connection close sequence completed for ${this._id}.`);
     }
 
     public async getBluetoothVersion(): Promise<string> {
