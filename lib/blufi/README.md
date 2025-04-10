@@ -71,49 +71,78 @@ pnpm add react-native-ble-plx @craftzdog/react-native-buffer
 ### 1. 导入模块
 
 ```typescript
-import { connectionManager, Connection } from './lib/blufi/connection'; // 根据你的项目结构调整路径
+// 不再需要直接导入 requestPermissions 和 BleManager/State
+import { connectionManager, Connection, ConnectionOptions } from './lib/blufi/connection'; // 根据你的项目结构调整路径
 import { Bluetooth } from './lib/blufi/constants';
 import { OpMode, DataFrameSubType, EventData, WifiErrReason, ConnectionState } from './lib/blufi/frame';
-import { BleError, Device } from 'react-native-ble-plx';
+import { BleError, Device } from 'react-native-ble-plx'; // Device 仍然可能需要
 import { Buffer } from '@craftzdog/react-native-buffer';
+import { Alert } from 'react-native'; // 导入 Alert 用于提示
 ```
 
 ### 2. 扫描设备
 
-使用 `connectionManager` 扫描具有 BLUFI 服务 UUID 的设备。
+在开始扫描之前，需要确保已获得必要的权限并且蓝牙已开启。可以通过 `connectionManager` 提供的便捷方法来处理：
 
 ```typescript
-let foundDevice: Device | null = null;
+// ... 在你的组件或逻辑中 ...
 
-console.log('开始扫描 BLUFI 设备...');
-connectionManager.startDeviceScan([Bluetooth.SERVICE_UUID], null, (error: BleError | null, scannedDevice: Device | null) => {
-  if (error) {
-    console.error('扫描错误:', error);
-    // 处理错误，例如请求权限或提示用户开启蓝牙
-    connectionManager.stopDeviceScan(); // 出错时停止扫描
-    return;
-  }
-
-  if (scannedDevice) {
-    console.log(`发现设备: ${scannedDevice.name} (${scannedDevice.id})`);
-    // 可以根据设备名称或其他信息进行过滤
-    if (scannedDevice.name?.includes('BLUFI')) { // 示例：只连接名字包含 BLUFI 的设备
-      foundDevice = scannedDevice;
-      console.log(`找到目标设备: ${foundDevice.name}`);
-      connectionManager.stopDeviceScan(); // 找到后停止扫描
-      // 接下来可以连接设备
-      connectToDevice(foundDevice.id);
+async function initiateScan() {
+    // 1. 请求权限
+    console.log('请求权限...');
+    const permissionsGranted = await connectionManager.requestPermissions();
+    if (!permissionsGranted) {
+        console.warn('权限被拒绝');
+        Alert.alert('权限不足', '需要蓝牙和位置权限才能扫描设备。请在系统设置中授权。');
+        return; // 停止执行
     }
-  }
-});
+    console.log('权限已授予。');
 
-// 设置扫描超时
-setTimeout(() => {
-  if (!foundDevice) {
-    console.log('扫描超时，未找到目标设备');
-    connectionManager.stopDeviceScan();
-  }
-}, 10000); // 10秒超时
+    // 2. 检查蓝牙状态
+    console.log('检查蓝牙状态...');
+    const bluetoothInfo = await connectionManager.checkBluetoothState();
+    if (!bluetoothInfo.enabled) {
+        Alert.alert('蓝牙未开启', `请先开启蓝牙才能扫描设备 (当前状态: ${bluetoothInfo.state})`);
+        return; // 停止执行
+    }
+    console.log('蓝牙已开启。');
+
+    // 3. 开始扫描
+    console.log('开始扫描 BLUFI 设备...');
+    let foundDevice: Device | null = null; // 示例：用于跟踪设备
+
+    connectionManager.startDeviceScan(
+        [Bluetooth.SERVICE_UUID], // 仅扫描 BLUFI 服务
+        null, // 或其他扫描选项
+        (error: BleError | null, scannedDevice: Device | null) => {
+            if (error) {
+                console.error('扫描错误:', error);
+                Alert.alert('扫描错误', error.message);
+                // 可能需要停止扫描状态更新等
+                return;
+            }
+
+            if (scannedDevice) {
+                console.log(`发现设备: ${scannedDevice.name} (${scannedDevice.id})`);
+                // ... 处理找到的设备 ...
+                // if (scannedDevice.name?.includes('BLUFI')) {
+                //    foundDevice = scannedDevice;
+                //    connectionManager.stopDeviceScan();
+                //    connectToDevice(foundDevice.id);
+                // }
+            }
+        }
+    );
+
+    // 设置扫描超时 (示例)
+    setTimeout(() => {
+       console.log('扫描超时，停止扫描。');
+       connectionManager.stopDeviceScan();
+       // 可能需要更新 UI 状态
+    }, 10000); // 10秒超时
+}
+
+// 在你的按钮 onPress 或其他触发器中调用 initiateScan()
 ```
 
 ### 3. 连接设备
@@ -298,16 +327,24 @@ function cleanup() {
 
 通过 `import { connectionManager } from './lib/blufi/connection';` 获取。
 
+-   **`requestPermissions(): Promise<boolean>`**:
+    请求 Android 平台所需的蓝牙和位置权限（自动处理 API 版本差异）。iOS 权限通过 Info.plist 配置，此方法在 iOS 上仅打印日志并返回 `true`。
+    -   返回: 一个 Promise，解析为 `true` 表示所有必需权限被授予，`false` 表示部分或全部权限被拒绝。
+-   **`checkBluetoothState(): Promise<{ enabled: boolean; state: BleState }>`**:
+    检查当前蓝牙适配器的状态。
+    -   返回: 一个 Promise，解析为一个包含以下内容的对象：
+        - `enabled`: 布尔值，`true` 表示蓝牙已开启 (`PoweredOn`)。
+        - `state`: 当前的蓝牙状态 (`BleState` 枚举值，需要从 react-native-ble-plx 导入以解释)。
 -   **`startDeviceScan(uuids: UUID[] | null, options: ScanOptions | null, listener: (error: BleError | null, device: Device | null) => void)`**:
-    开始扫描 BLE 设备。
+    开始扫描 BLE 设备。**注意：在此之前应调用 `requestPermissions()` 和 `checkBluetoothState()` 确保环境就绪。**
     -   `uuids`: 要扫描的服务 UUID 数组 (对于 BLUFI，通常是 `[Bluetooth.SERVICE_UUID]`)。
     -   `options`: `react-native-ble-plx` 的扫描选项。
     -   `listener`: 扫描回调函数，在发现设备或出错时调用。
 -   **`stopDeviceScan()`**: 停止当前的设备扫描。
--   **`connect(deviceId: string, config?: ConnectionConfig): Promise<Connection>`**:
+-   **`connect(deviceId: string, options?: Partial<ConnectionOptions>): Promise<Connection>`**:
     连接到指定 ID 的设备并完成 BLUFI 初始化。
     -   `deviceId`: 目标设备的 ID。
-    -   `config`: 连接配置，目前仅包含 `timeout` (毫秒，默认 3000)。
+    -   `options`: 连接配置 (见 `ConnectionOptions` 接口)。
     -   返回: 一个 Promise，解析为 `Connection` 实例。
 -   **`disconnect(deviceId: string): Promise<void>`**: 断开与指定设备的连接并清理相关资源。
 -   **`disconnectAll(): Promise<void>`**: 断开所有当前管理的连接。
@@ -370,6 +407,25 @@ function cleanup() {
 -   **`onReceiveWifiConnectionState(callback: (data: EventData[DataFrameSubType.SUBTYPE_WIFI_CONNECTION_STATE]) => void): Connection`**: 监听 WiFi 连接状态报告。`data` 包含详细的状态信息（参考 `frame.ts` 中的 `parseWifiState` 和相关枚举）。
 -   **`onReceiveCustomData(callback: (data: EventData[DataFrameSubType.SUBTYPE_CUSTOM_DATA]) => void): Connection`**: 监听自定义数据。`data`: `{ data: Buffer }`。
 -   **`onReceiveError(callback: (data: EventData[DataFrameSubType.SUBTYPE_ERROR]) => void): Connection`**: 监听设备报告的错误。`data`: `{ error: string, code: number }` (错误描述和错误码，参考 `ReportError` 枚举)。
+
+### `ConnectionOptions` 接口
+
+传递给 `connectionManager.connect` 的可选配置对象。
+
+```typescript
+interface ConnectionOptions {
+    /** ACK 确认超时时间 (毫秒, 默认 3000) */
+    ackTimeout?: number;
+    /** 
+     * 尝试请求的 MTU 大小 (例如 185 或 247)。
+     * 小于 23 则跳过请求。
+     * 注意：实际协商的 MTU 可能因设备和系统限制而不同，
+     * 调用此选项主要目的是尝试将 MTU 从默认值 (23) 提升。
+     * 默认值：185。
+     */
+    requestMtu?: number;
+}
+```
 
 ## 错误处理
 

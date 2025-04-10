@@ -2,8 +2,8 @@ import { Bluetooth } from "@/lib/blufi/constants";
 import { EventBus, EventCallback, EventData, EventSubscription } from "@/lib/blufi/eventbus";
 import { AuthMode, checksum, createCtrlFrame, createDataFrame, CtrlFrame, CtrlFrameSubType, DataFrame, DataFrameSubType, decodeData, Frame, FrameCodec, FrameControl, FrameType, OpMode, SecurityMode } from "@/lib/blufi/frame";
 import { Buffer } from "@craftzdog/react-native-buffer";
+import { Permission, PermissionsAndroid, Platform } from "react-native";
 import { BleError, BleManager, State as BleState, Characteristic, Device, ScanOptions, Subscription, UUID } from "react-native-ble-plx";
-import { requestPermissions as requestBlufiPermissions } from "./permissions";
 
 class ConnectionManager {
     private static instance: ConnectionManager;
@@ -132,7 +132,52 @@ class ConnectionManager {
     }
 
     public async requestPermissions(): Promise<boolean> {
-        return await requestBlufiPermissions();
+        if (Platform.OS === "android") {
+            const apiLevel = Platform.Version as number;
+            const permissions: Permission[] = [];
+            // Android 12 (API 31) 及以上版本需要新的蓝牙权限
+            if (apiLevel >= 31) {
+                permissions.push(
+                    PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN as Permission,
+                    PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT as Permission
+                );
+            }
+            // 在所有 Android 版本都请求位置权限，这对扫描至关重要
+            permissions.push(
+                PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION as Permission
+            );
+
+            try {
+                console.log('请求 Android 权限:', permissions);
+                const granted = await PermissionsAndroid.requestMultiple(permissions);
+                console.log('权限授予结果:', granted);
+
+                // 检查所有请求的权限是否都被授予
+                const allGranted = permissions.every(
+                    (permission) => granted[permission] === PermissionsAndroid.RESULTS.GRANTED
+                );
+
+                if (allGranted) {
+                    console.log('所有必需的 Android 权限已授予');
+                    return true;
+                } else {
+                    console.warn('部分或全部 Android 权限被拒绝');
+                    permissions.forEach(p => {
+                        if (granted[p] !== PermissionsAndroid.RESULTS.GRANTED) {
+                            console.warn(`权限被拒绝: ${p}`);
+                        }
+                    });
+                    return false;
+                }
+            } catch (err) {
+                console.warn('请求 Android 权限时出错:', err);
+                return false;
+            }
+        } else if (Platform.OS === 'ios') {
+            console.log('iOS 平台，权限由 Info.plist 和系统处理');
+            return true; // 假设 Info.plist 配置正确
+        }
+        return false;
     }
 
     public async checkBluetoothState(): Promise<{ enabled: boolean; state: BleState }> {
@@ -740,7 +785,16 @@ class Connection {
         }
     }
 
+    /**
+     * 关闭与此设备的连接并清理所有相关资源。
+     * **警告:** 此方法主要供 ConnectionManager 内部管理使用。
+     * 不建议用户直接调用，除非明确知道需要手动清理连接。
+     * 请优先使用 `connectionManager.disconnect(deviceId)`。
+     * @internal
+     */
     public async close() {
+        console.log(`Closing connection for device ${this._id}...`);
+
         // 0. 清理等待中的 ACK Promises
         if (this.resolves.size > 0) {
             this.resolves.clear();
