@@ -52,9 +52,9 @@ export default function DeviceScreen() {
   }, [deviceId]);
 
   const connect = async () => {
-    //todo  set 30 for test,remove for production
+    //todo  set -1 to use default for test,remove for production
     const connection = await connectionManager.connect(deviceId, {
-      requestMtu: 185,
+      requestMtu: -1,
       ackTimeout: 2000,
     });
     connection

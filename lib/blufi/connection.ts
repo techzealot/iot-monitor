@@ -57,9 +57,14 @@ class ConnectionManager {
     }
 
     private async requestMtu(device: Device, mtu: number): Promise<Device> {
-        //设置mtu为允许的最大值
-        if (mtu > 247) {
-            throw new Error("mtu must be less than 247");
+        //不能超过允许的最大值
+        if (mtu > 517) {
+            throw new Error("mtu must be less than 517");
+        }
+        //小于23,则跳过不执行
+        if (mtu < 23) {
+            console.warn(`mtu is less than 23,skip requestMtu, current mtu: ${device.mtu}`);
+            return device;
         }
         console.log(`Attempting to request MTU: ${mtu}`);
         try {
@@ -131,7 +136,10 @@ class ConnectionManager {
 interface ConnectionOptions {
     /** ACK 确认超时时间 (毫秒) */
     ackTimeout?: number;
-    /** 尝试请求的 MTU 大小 (例如 247) */
+    /** 
+     * 尝试请求的 MTU 大小 (例如 247) 
+     * 小于23则跳过不执行具体操作
+    */
     requestMtu?: number;
     // 这里可以添加未来的配置项，例如：
     // debugLogging?: boolean;
@@ -818,3 +826,6 @@ class Connection {
 
 export const connectionManager = ConnectionManager.getInstance();
 export { Connection, ConnectionOptions };
+
+
+

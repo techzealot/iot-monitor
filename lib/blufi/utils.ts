@@ -40,3 +40,7 @@ export const crc16 = (crc: number, pByte: Buffer) => {
     }
     return ~crc & 0xffff;
 };
+
+export function sleep(ms: number) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
