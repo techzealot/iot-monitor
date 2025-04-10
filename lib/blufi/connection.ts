@@ -40,6 +40,8 @@ class ConnectionManager {
      * 写操作（Write Request / Command）：有效载荷 ≤ 20 字节（因 ATT 头占 3 字节）
      * 读操作（Read Response）：有效载荷 ≤ 22 字节（因 ATT 头仅占 1 字节）
      * BLE5.0+:247字节
+     * 通过 ATT_MTU 交换协议，MTU 最大可协商至 517 字节（实际有效数据为 512 字节，剩余 5 字节用于协议头）
+     * 但是手机厂商有限制,ios限制为185,因此使用185比较安全
      * @param device 设备
      * @param mtu 最大传输单元
      * @returns 配置后的设备
@@ -48,6 +50,7 @@ class ConnectionManager {
         const { requestMtu } = options || {};
         let configedDevice = device;
         if (requestMtu) {
+            console.log("execute requestMtu:", requestMtu);
             configedDevice = await this.requestMtu(device, requestMtu);
         }
         return configedDevice;
@@ -134,10 +137,11 @@ interface ConnectionOptions {
     // debugLogging?: boolean;
 }
 
-// 默认值不包含 requestMtu，表示默认不主动请求特定 MTU
-const defaultConnectionOptions: { ackTimeout: number; requestMtu: number | undefined } = {
+// 所有配置项都必须有默认值
+const defaultConnectionOptions: Required<ConnectionOptions> = {
     ackTimeout: 3000,
-    requestMtu: 247,
+    //折衷考虑，使用185，android和ios都可以
+    requestMtu: 185,
 };
 
 class Connection {
@@ -166,6 +170,7 @@ class Connection {
         //blufi协议除数据帧外，其他帧长度最大为6字节
         this.payloadSize = this.device.mtu - 3 - 1 - 6;
         console.log("payloadSize:", this.payloadSize);
+        console.log("options:", this._options);
         this.subscription = await this.initMessageCallback();
     }
 
@@ -244,13 +249,13 @@ class Connection {
         const promise = new Promise<void>((resolve, reject) => {
             //如果需要ack，则需要等待ack消息
             if (frame.frameControl.isRequireAck()) {
-                console.log("map on send:", this.resolves);
                 //清理资源
-                const timeoutId = setTimeout(() => { // 保存 timeoutId (可选，用于在 close 时清除)
+                setTimeout(() => { // 保存 timeoutId (可选，用于在 close 时清除)
                     this.resolves.delete(frame.sequence);
                     reject(new Error(`${new Date().toISOString()} ack: [${frame.sequence}] timeout ${this._options.ackTimeout}ms`));
                 }, this._options.ackTimeout); // 使用 this._options.ackTimeout
                 this.resolves.set(frame.sequence, resolve);
+                console.log("map after send:", this.resolves);
             } else {
                 resolve();
             }
@@ -727,7 +732,7 @@ class Connection {
             } catch (error) {
                 // 捕获并忽略预期的 "Operation was cancelled" 错误
                 if (error instanceof BleError && error.message.includes('Operation was cancelled')) {
-                    console.warn(`Subscription removal for ${this._id} was cancelled (expected during disconnection).`);
+                    console.info(`Subscription removal for ${this._id} was cancelled (expected during disconnection).`);
                 } else {
                     // 记录其他意外错误
                     console.error(`Error removing subscription for ${this._id}:`, error);
