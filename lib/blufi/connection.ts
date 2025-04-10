@@ -2,7 +2,8 @@ import { Bluetooth } from "@/lib/blufi/constants";
 import { EventBus, EventCallback, EventData, EventSubscription } from "@/lib/blufi/eventbus";
 import { AuthMode, checksum, createCtrlFrame, createDataFrame, CtrlFrame, CtrlFrameSubType, DataFrame, DataFrameSubType, decodeData, Frame, FrameCodec, FrameControl, FrameType, OpMode, SecurityMode } from "@/lib/blufi/frame";
 import { Buffer } from "@craftzdog/react-native-buffer";
-import { BleError, BleManager, Characteristic, Device, ScanOptions, Subscription, UUID } from "react-native-ble-plx";
+import { BleError, BleManager, State as BleState, Characteristic, Device, ScanOptions, Subscription, UUID } from "react-native-ble-plx";
+import { requestPermissions as requestBlufiPermissions } from "./permissions";
 
 class ConnectionManager {
     private static instance: ConnectionManager;
@@ -130,6 +131,17 @@ class ConnectionManager {
         this.connections.delete(connection.id);
     }
 
+    public async requestPermissions(): Promise<boolean> {
+        return await requestBlufiPermissions();
+    }
+
+    public async checkBluetoothState(): Promise<{ enabled: boolean; state: BleState }> {
+        const state = await this.bleManager.state();
+        return {
+            enabled: state === BleState.PoweredOn,
+            state: state,
+        };
+    }
 }
 
 // 定义新的 ConnectionOptions 接口和默认值
