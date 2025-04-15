@@ -7,7 +7,7 @@ import { connectionManager } from "@/lib/blufi/connection";
 import { router } from "expo-router";
 // BleManager and State are no longer directly used here
 import { useCallback, useEffect, useState } from "react";
-import { Alert, FlatList, StyleSheet } from "react-native";
+import { Alert, FlatList, StyleSheet, TouchableOpacity } from "react-native";
 import { Device } from "react-native-ble-plx"; // Keep Device import if used elsewhere
 
 // Remove local BleManager instance
@@ -172,52 +172,41 @@ export default function TabOneScreen() {
 
   // 渲染设备列表项
   const renderItem = ({ item: device }: { item: Device }) => {
-    const isConnected = false;
+    // 移除 isConnected 逻辑，因为现在点击整个项来连接
+    // const isConnected = connectedDeviceIds.includes(device.id);
 
     return (
-      <Box
-        className="mb-2 flex-row items-center justify-between rounded-lg bg-white p-4"
-        style={styles.deviceItem}
+      // 使用 TouchableOpacity 包裹，并添加 onPress 事件
+      <TouchableOpacity
+        onPress={() => connectDevice(device)}
+        activeOpacity={0.7}
       >
-        <Box className="mr-4 flex-1">
-          <Text className="text-lg font-bold">
-            {device.name || "未知设备"} ({getDeviceType(device.name)})
-          </Text>
-          <Text className="text-sm text-gray-500">ID: {device.id}</Text>
-          <Text className="text-sm text-gray-500">
-            信号强度: {device.rssi || "未知"}
-          </Text>
-        </Box>
-        {isConnected ? (
-          <Box className="justify-between">
-            <Button
-              variant="outline"
-              className="mb-2 w-20"
-              onPress={() => {
-                console.log("导航到设备页面:", device.name);
-                router.push(`/device?deviceId=${device.id}`);
-              }}
-            >
-              <ButtonText>查看</ButtonText>
-            </Button>
-            <Button
-              variant="outline"
-              className="w-20 border-red-500"
-              onPress={() => disconnectDevice(device)}
-            >
-              <ButtonText className="text-red-500">断开</ButtonText>
-            </Button>
+        <Box
+          className="mb-2 flex-row items-center justify-between rounded-lg bg-white p-4"
+          style={styles.deviceItem}
+        >
+          <Box className="mr-4 flex-1">
+            <Text className="text-lg font-bold">
+              {device.name || "未知设备"} ({getDeviceType(device.name)})
+            </Text>
+            <Text className="text-sm text-gray-500">ID: {device.id}</Text>
+            <Text className="text-sm text-gray-500">
+              信号强度: {device.rssi || "未知"}
+            </Text>
           </Box>
-        ) : (
-          <Button
-            variant="solid"
-            className="bg-blue-500"
-            onPress={() => connectDevice(device)}
-          >
-            <ButtonText className="text-white">连接</ButtonText>
-          </Button>
-        )}
-      </Box>
+          {/* 移除右侧的条件渲染和按钮 */}
+          {/* 
+          {isConnected ? (
+            <Box className="justify-between">
+              <Button ... >查看</Button>
+              <Button ... >断开</Button>
+            </Box>
+          ) : (
+            <Button ... >连接</Button>
+          )}
+          */}
+        </Box>
+      </TouchableOpacity>
     );
   };
 
@@ -233,21 +222,12 @@ export default function TabOneScreen() {
   }, []);
 
   return (
-    <Box className="flex-1 bg-gray-100">
+    <Box className="flex-1 bg-background-50">
       {/* 顶部操作栏 */}
-      <Box className="flex-row items-center justify-between bg-white p-4">
-        <Button
-          variant="outline"
-          onPress={() => {
-            console.log("导航到配网页面");
-            router.push("/network");
-          }}
-        >
-          <ButtonText>配网</ButtonText>
-        </Button>
+      <Box className="flex-row items-center justify-end p-4">
         <Button
           variant="solid"
-          className={isScanning ? "bg-gray-500" : "bg-blue-500"}
+          className={isScanning ? "bg-gray-500" : "bg-primary-500"}
           onPress={startScan}
         >
           <ButtonText>{isScanning ? "停止扫描" : "开始扫描"}</ButtonText>

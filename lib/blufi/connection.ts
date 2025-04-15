@@ -1,4 +1,4 @@
-import { Bluetooth } from "@/lib/blufi/constants";
+import { BLEDefault } from "@/lib/blufi/constants";
 import { EventBus, EventCallback, EventData, EventSubscription } from "@/lib/blufi/eventbus";
 import { AuthMode, checksum, createCtrlFrame, createDataFrame, CtrlFrame, CtrlFrameSubType, DataFrame, DataFrameSubType, decodeData, Frame, FrameCodec, FrameControl, FrameType, OpMode, SecurityMode } from "@/lib/blufi/frame";
 import { Buffer } from "@craftzdog/react-native-buffer";
@@ -64,7 +64,10 @@ class ConnectionManager {
         }
         //小于23,则跳过不执行
         if (mtu < 23) {
-            console.warn(`mtu is less than 23,skip requestMtu, current mtu: ${device.mtu}`);
+            //负数表示合法值,不执行,0~22表示非法值,输出警告
+            if (mtu > 0) {
+                console.warn(`mtu is less than 23,skip requestMtu, current mtu: ${device.mtu}`);
+            }
             return device;
         }
         console.log(`Attempting to request MTU: ${mtu}`);
@@ -198,6 +201,18 @@ interface ConnectionOptions {
      * 小于23则跳过不执行具体操作
     */
     requestMtu?: number;
+    /**
+     * 服务UUID
+     */
+    serviceUUID?: UUID;
+    /**
+     * 写特征UUID
+     */
+    writeCharacteristicUUID?: UUID;
+    /**
+     * 通知特征UUID
+     */
+    notifyCharacteristicUUID?: UUID;
     // 这里可以添加未来的配置项，例如：
     // debugLogging?: boolean;
 }
@@ -207,6 +222,9 @@ const defaultConnectionOptions: Required<ConnectionOptions> = {
     ackTimeout: 3000,
     //折衷考虑，使用185，android和ios都可以
     requestMtu: 185,
+    serviceUUID: BLEDefault.SERVICE_UUID,
+    writeCharacteristicUUID: BLEDefault.WRITE_CHARACTERISTIC_UUID,
+    notifyCharacteristicUUID: BLEDefault.NOTIFY_CHARACTERISTIC_UUID,
 };
 
 class Connection {
@@ -220,7 +238,7 @@ class Connection {
     private fragmentOffset: number = 0;
     private payloadSize: number = 20;
     private _receivedSequence: number = -1;
-    private readonly _options: ConnectionOptions; // 存储合并后的完整配置
+    private readonly _options: Required<ConnectionOptions>; // 存储合并后的完整配置
 
     // 构造函数接收可选的配置项，移除旧的 config 参数
     constructor(private readonly device: Device, options?: Partial<ConnectionOptions>) {
@@ -327,8 +345,8 @@ class Connection {
         });
         console.log(new Date().toISOString(), " send message:", JSON.stringify(frame));
         await this.device.writeCharacteristicWithResponseForService(
-            Bluetooth.SERVICE_UUID,
-            Bluetooth.WRITE_CHARACTERISTIC_UUID,
+            this._options.serviceUUID,
+            this._options.writeCharacteristicUUID,
             FrameCodec.encode(frame).toString("base64"),
         );
         return promise;
@@ -528,11 +546,15 @@ class Connection {
      */
     private async onMessageNotify(callback: (message: Frame) => void): Promise<Subscription> {
         const subscription = this.device.monitorCharacteristicForService(
-            Bluetooth.SERVICE_UUID,
-            Bluetooth.NOTIFY_CHARACTERISTIC_UUID,
+            this._options.serviceUUID,
+            this._options.notifyCharacteristicUUID,
             (error: Error | null, characteristic: Characteristic | null) => {
                 if (error) {
-                    console.warn("Monitor error:", error);
+                    if (error.message.includes("Operation was cancelled")) {
+                        console.log("Monitor error:", error);
+                    } else {
+                        console.warn("Monitor error:", error);
+                    }
                     return;
                 }
                 if (characteristic?.value) {
