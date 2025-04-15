@@ -6,7 +6,7 @@ import { connectionManager } from "@/lib/blufi/connection";
 // import { requestPermissions } from "@/lib/blufi/permissions";
 import { router } from "expo-router";
 // BleManager and State are no longer directly used here
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, FlatList, StyleSheet, TouchableOpacity } from "react-native";
 import { Device } from "react-native-ble-plx"; // Keep Device import if used elsewhere
 
@@ -42,16 +42,23 @@ const getDeviceType = (name: string | null): string => {
 export default function TabOneScreen() {
   const [isScanning, setIsScanning] = useState(false);
   const [devices, setDevices] = useState<Device[]>([]);
-  const [connectedDeviceIds, setConnectedDeviceIds] = useState<string[]>([]);
+  const scanTimeoutRef = useRef<number | null>(null); // Ref to store timeout ID (number in RN)
 
   // 开始扫描
   const startScan = useCallback(async () => {
+    // Clear any existing timeout when starting a new scan or stopping
+    if (scanTimeoutRef.current) {
+      clearTimeout(scanTimeoutRef.current);
+      scanTimeoutRef.current = null;
+    }
+
     try {
       if (isScanning) {
         // 如果正在扫描，则停止扫描
         console.log("停止扫描...");
         connectionManager.stopDeviceScan();
         setIsScanning(false);
+        // No need to clear timeout here again, it's cleared at the beginning
         return;
       }
 
@@ -87,7 +94,7 @@ export default function TabOneScreen() {
       // 清空上次扫描结果
       setDevices([]);
       console.log("开始扫描...");
-      setIsScanning(true);
+      setIsScanning(true); // Set scanning to true *before* starting the scan
 
       // 3. 开始扫描
       await connectionManager.startDeviceScan(
@@ -106,7 +113,12 @@ export default function TabOneScreen() {
               // iOS 权限错误示例
               Alert.alert("权限错误", "请检查应用的蓝牙权限设置。");
             }
-            setIsScanning(false);
+            setIsScanning(false); // Stop scanning on error
+            if (scanTimeoutRef.current) {
+              // Clear timeout on error too
+              clearTimeout(scanTimeoutRef.current);
+              scanTimeoutRef.current = null;
+            }
             return;
           }
 
@@ -123,32 +135,38 @@ export default function TabOneScreen() {
       );
 
       // 10秒后自动停止扫描
-      setTimeout(() => {
-        // 检查是否仍在扫描，避免在已停止后再次调用 stop
-        // 需要访问 isScanning 的最新值，或者通过状态来判断
-        // 一个简单的做法是在 setIsScanning(false) 时清除 timeout
-        // 或者在 timeout 回调中检查状态
-        if (isScanning) {
-          // 注意：这里的 isScanning 可能是闭包中的旧值
-          console.log("扫描超时，停止扫描。");
-          connectionManager.stopDeviceScan();
-          setIsScanning(false);
-        }
-      }, 10000);
+      // Store the timeout ID in the ref
+      scanTimeoutRef.current = setTimeout(() => {
+        console.log("扫描超时，停止扫描。");
+        connectionManager.stopDeviceScan();
+        setIsScanning(false); // Directly set state to false
+        scanTimeoutRef.current = null; // Clear the ref after timeout fires
+      }, 10000) as unknown as number; // Explicitly cast to number for RN environment
     } catch (error) {
       console.error("启动扫描失败:", error);
       setIsScanning(false);
+      if (scanTimeoutRef.current) {
+        // Clear timeout on catch error
+        clearTimeout(scanTimeoutRef.current);
+        scanTimeoutRef.current = null;
+      }
       Alert.alert("扫描启动失败", (error as Error).message);
     }
-  }, [isScanning]);
+  }, [isScanning]); // Keep isScanning in dependency array
 
   // 连接设备
   const connectDevice = async (device: Device) => {
-    try {
-      // 停止扫描
+    // Stop scanning before connecting
+    if (isScanning) {
+      console.log("连接设备前停止扫描...");
       connectionManager.stopDeviceScan();
-      // 更新已连接设备列表
-      setConnectedDeviceIds((prev) => [...prev, device.id]);
+      setIsScanning(false);
+      if (scanTimeoutRef.current) {
+        clearTimeout(scanTimeoutRef.current);
+        scanTimeoutRef.current = null;
+      }
+    }
+    try {
       // 导航到设备页面
       router.push(`/device?deviceId=${device.id}`);
     } catch (error) {
@@ -162,8 +180,6 @@ export default function TabOneScreen() {
     try {
       console.log("正在断开设备连接:", device.id);
       connectionManager.disconnect(device.id);
-      // 更新已连接设备列表
-      setConnectedDeviceIds((prev) => prev.filter((id) => id !== device.id));
     } catch (error) {
       console.error("断开连接失败:", error);
       alert("断开连接失败");
@@ -195,7 +211,7 @@ export default function TabOneScreen() {
             </Text>
           </Box>
           {/* 移除右侧的条件渲染和按钮 */}
-          {/* 
+          {/*
           {isConnected ? (
             <Box className="justify-between">
               <Button ... >查看</Button>
@@ -215,11 +231,16 @@ export default function TabOneScreen() {
     return () => {
       // 确保停止扫描
       connectionManager.stopDeviceScan();
+      // 清除任何未完成的扫描超时计时器
+      if (scanTimeoutRef.current) {
+        clearTimeout(scanTimeoutRef.current);
+        scanTimeoutRef.current = null;
+      }
       // 重要：销毁共享的 BleManager 实例
       // 这通常在应用根组件或应用生命周期事件中处理更合适
       // bleManager.destroy();
     };
-  }, []);
+  }, []); // Empty dependency array means this runs only on mount and unmount
 
   return (
     <Box className="flex-1 bg-background-50">
