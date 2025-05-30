@@ -80,7 +80,9 @@ class ConnectionManager {
     }
 
     public async connect(deviceId: string, options?: Partial<ConnectionOptions>): Promise<Connection> {
-        const device = await this.bleManager.connectToDevice(deviceId);
+        const device = await this.bleManager.connectToDevice(deviceId, {
+            timeout: options?.connectTimeout
+        });
         let discoveredDevice = await device.discoverAllServicesAndCharacteristics();
         const readyDevice = await this.configDevice(discoveredDevice, options);
         const connection = new Connection(readyDevice, options);
@@ -194,6 +196,10 @@ class ConnectionManager {
 
 // 定义新的 ConnectionOptions 接口和默认值
 interface ConnectionOptions {
+    /**
+     * 连接超时
+     */
+    connectTimeout?: number;
     /** ACK 确认超时时间 (毫秒) */
     ackTimeout?: number;
     /** 
@@ -219,6 +225,7 @@ interface ConnectionOptions {
 
 // 所有配置项都必须有默认值
 const defaultConnectionOptions: Required<ConnectionOptions> = {
+    connectTimeout: 3000,
     ackTimeout: 3000,
     //折衷考虑，使用185，android和ios都可以
     requestMtu: 185,
@@ -232,7 +239,7 @@ class Connection {
     private _name: string;
     private _sequence: number = 0;
     private eventBus: EventBus = new EventBus();
-    private resolves: Map<number, () => void> = new Map();
+    private promises: Map<number, { resolve: () => void, reject: (reason: any) => void }> = new Map();
     private subscription?: Subscription;
     private fragmentFrame: Frame | null = null;
     private fragmentOffset: number = 0;
@@ -294,14 +301,8 @@ class Connection {
                     case CtrlFrameSubType.SUBTYPE_ACK:
                         //ack消息的sequence在data的第0个字节
                         const ackedSequence = message.data.readUInt8(0);
-                        console.log("map on receive:", this.resolves);
-                        const resolve = this.resolves.get(ackedSequence);
-                        if (resolve) {
-                            resolve();
-                            this.resolves.delete(ackedSequence); // 在 resolve 后删除条目
-                        } else {
-                            console.warn(new Date().toISOString(), ` ack: [${ackedSequence}] received but timeout`);
-                        }
+                        console.log("map on receive:", this.promises);
+                        this.resolvePromise(ackedSequence);
                         break;
                     default:
                         console.warn(`未转发的控制消息: ${JSON.stringify(message)}`);
@@ -330,15 +331,27 @@ class Connection {
 
     private async sendMessage(frame: Frame): Promise<void> {
         const promise = new Promise<void>((resolve, reject) => {
+            const sequence = frame.sequence;
             //如果需要ack，则需要等待ack消息
             if (frame.frameControl.isRequireAck()) {
-                //清理资源
-                setTimeout(() => { // 保存 timeoutId (可选，用于在 close 时清除)
-                    this.resolves.delete(frame.sequence);
-                    reject(new Error(`${new Date().toISOString()} ack: [${frame.sequence}] timeout ${this._options.ackTimeout}ms`));
-                }, this._options.ackTimeout); // 使用 this._options.ackTimeout
-                this.resolves.set(frame.sequence, resolve);
-                console.log("map after send:", this.resolves);
+                const timeoutId = setTimeout(() => {
+                    this.rejectPromise(sequence, new Error(`${new Date().toISOString()} ack: [${frame.sequence}] timeout ${this._options.ackTimeout}ms`));
+                }, this._options.ackTimeout);
+                //借助闭包优雅清理资源,自动清理资源,无需调用者手动清理资源
+                this.promises.set(sequence, {
+                    resolve: () => {
+                        clearTimeout(timeoutId);
+                        this.promises.delete(sequence);
+                        resolve();
+                    },
+                    reject: (reason) => {
+                        clearTimeout(timeoutId);
+                        this.promises.delete(sequence);
+                        reject(reason);
+                    }
+                }
+                );
+                console.log("map after send:", this.promises);
             } else {
                 resolve();
             }
@@ -350,6 +363,14 @@ class Connection {
             FrameCodec.encode(frame).toString("base64"),
         );
         return promise;
+    }
+
+    private resolvePromise(sequence: number): void {
+        this.promises.get(sequence)?.resolve();
+    }
+
+    private rejectPromise(sequence: number, reason: any): void {
+        this.promises.get(sequence)?.reject(reason);
     }
 
     private async sendNoDataCtrlFrame(subType: Exclude<CtrlFrameSubType, CtrlFrameSubType.SUBTYPE_ACK>): Promise<void> {
@@ -382,9 +403,9 @@ class Connection {
         await this.sendWithDataCtrlFrame(CtrlFrameSubType.SUBTYPE_SET_SEC_MODE, data);
     }
 
-    public async sendSetOpModeCtrlFrame(): Promise<void> {
+    public async sendSetOpModeCtrlFrame(opMode: OpMode = OpMode.STATION): Promise<void> {
         const data = Buffer.alloc(1);
-        data.writeUInt8(OpMode.STATION, 0);
+        data.writeUInt8(opMode, 0);
         await this.sendWithDataCtrlFrame(CtrlFrameSubType.SUBTYPE_SET_OP_MODE, data);
     }
 
@@ -817,9 +838,12 @@ class Connection {
     public async close() {
         console.log(`Closing connection for device ${this._id}...`);
 
-        // 0. 清理等待中的 ACK Promises
-        if (this.resolves.size > 0) {
-            this.resolves.clear();
+        // 0. 清理等待中的 ACK Promises,reject未处理的promise
+        if (this.promises.size > 0) {
+            for (const [sequence, promise] of this.promises) {
+                promise.reject(new Error(`connection closed`));
+            }
+            this.promises.clear();
         }
         // 1. 尝试移除特征监听器
         if (this.subscription) {
