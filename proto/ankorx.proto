@@ -1,0 +1,159 @@
+syntax = "proto3";
+
+package ankorx.protocol;
+
+// 定义消息类型枚举
+enum MessageType {
+  TYPE_UNKNOWN = 0;
+  HEARTBEAT = 1;         
+  REPORT = 2;      
+  REQUEST = 3;          
+  RESPONSE = 4;          
+  ACK = 5;         
+}
+
+//定义通信参与各方
+enum TARGET{
+  UNKNOWN=0;
+  APP=1;
+  SERVER=2;
+  COLLECTOR=3;
+  INVERTER=4;
+  //测试用nodejs客户端
+  CLIENT=5;
+}
+
+// 基础消息头部
+// 采集器编号在连接认证的过程中绑定,后续不需要传递,可以减少大量带宽
+message MessageHeader {
+  // 消息类型
+  MessageType message_type = 1; 
+  // 序列号
+  uint32 sequence_number = 2;  
+  // 协议版本号
+  uint32 version = 3;   
+  // 对于异步请求由发起者设置,需要ack作为异步成功的标志,对于同步请求,不需要ack,直接由响应作为成功的标志
+  // 只有request需要ack,目前report,heartbeat,response,ack消息都不需要ack      
+  bool ack = 4;    
+  //时间戳标记 服务端位unix时间戳,freertos为tickCount,发送者携带,响应者原样返回,不依赖于客户端和服务端时钟同步,只依赖于各自时钟          
+  uint64 timestamp =5; 
+  // 消息来源
+  TARGET from = 6;   
+  // 消息目标            
+  TARGET to = 7;
+  // 不需要单独的设备id字段,由消息本身携带          
+}
+
+// 心跳消息
+//todo: 可以添加基本信息 可用内存,最小剩余内存,信号强度???,uptime
+// rssi,memory,task count 需要测量一下耗时,太耗时则去掉
+message HeartbeatMessage {
+  uint32 remainMemory=1;
+  uint32 minimumMemory=2;
+  uint32 uptime=3;
+}
+
+// 配置数据
+message ConfigData {
+  // 上报间隔(豪秒)
+  uint32 report_interval_ms = 1;   
+}
+
+// 原始数据（用于数据透传）
+message RawData {
+  // 原始数据，限制512字节
+  // 设备编号由消息本身携带
+  bytes payload = 1;  
+}
+
+message StringData{
+  //字符串数据,限制512字节
+  string payload = 1; 
+}
+
+message ErrorData{
+  // 错误代码,>=0表示成功,<0表示失败
+  uint32 code = 2;
+  // 错误描述，限制64字节         
+  string error_message = 3;  
+}
+
+enum ResponseType{
+  RESPONSE_UNKNOWN=0;
+  RESPONSE_ERROR=1;
+  RESPONSE_RAW=2;
+  RESPONSE_STRING=3;
+}
+
+// 响应消息
+message ResponseMessage {
+  ResponseType response_type=1;
+  // 回复消息ID
+  uint32 replyTo = 2;     
+  // 执行耗时,单位毫秒,客户端收到任务到响应的时间
+  uint32 executionTime_ms = 3; 
+  oneof payload {
+    RawData raw = 4;
+    StringData utf8 = 5;
+    ErrorData error = 6;
+  }
+}
+
+enum ReportType{
+  REPORT_UNKNOWN=0;
+  REPORT_RAW=1;
+  REPORT_STRING=2;
+}
+
+// 主动上报消息
+message ReportMessage {
+  ReportType report_type=1;
+  oneof payload{
+    RawData raw=2;
+    StringData utf8 = 3;
+  }
+}
+
+enum RequestType{
+  REQUEST_UNKNOWN =0;
+  REQUEST_RAW=1;
+  REQUEST_CONFIG=2;
+  REQUEST_STRING=3;
+}
+
+// 请求消息
+message RequestMessage {
+  RequestType request_type=1;
+  oneof payload{
+    RawData raw=2;
+    ConfigData config = 3;
+    StringData utf8 = 4;
+  }
+}
+
+//确认消息
+message AckMessage {
+  // 回复消息ID
+  uint32 replyTo = 1;     
+}
+
+// 包装所有消息
+message AnyMessage {
+  // 消息头
+  MessageHeader header = 1;    
+  // 消息体 - 只能设置其中一个字段
+  oneof payload {
+    HeartbeatMessage heartbeat = 2;
+    ReportMessage report = 3;
+    RequestMessage request = 4;
+    ResponseMessage response = 5;
+    AckMessage ack = 6;
+  }
+}
+
+// 加密数据消息,用于aes-gcm-128通信，完全独立于AnyMessage,用于在通信过程中传输加密的AnyMessage,蓝牙通信使用,不需要在tls中使用,无需定义nanopb的大小限制配置
+message EncryptedData {
+  bytes iv = 1;           // 初始化向量,采用12字节
+  bytes auth_tag = 2;     // 认证标签,16字节
+  bytes encrypted = 3;    // 加密后的数据（序列化的AnyMessage）
+}

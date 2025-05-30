@@ -25,6 +25,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { Text } from "@/components/ui/text";
 import { Connection, connectionManager } from "@/lib/blufi/connection";
+import { OpMode } from "@/lib/blufi/frame";
 import { Buffer } from "@craftzdog/react-native-buffer";
 import { Ionicons } from "@expo/vector-icons";
 import { router, Stack, useLocalSearchParams } from "expo-router";
@@ -46,6 +47,7 @@ export default function DeviceScreen() {
     [],
   );
   const [loadingWifiList, setLoadingWifiList] = useState(false);
+  const [selectedOpMode, setSelectedOpMode] = useState<OpMode | null>(null);
 
   const getConnection = useCallback(() => {
     return connectionManager.getConnection(deviceId);
@@ -220,13 +222,26 @@ export default function DeviceScreen() {
     }
   };
 
-  const setStationMode = async () => {
+  const setStationMode = async (opMode: OpMode) => {
     try {
-      await connection?.sendSetOpModeCtrlFrame();
-      setReceivedMessages((prev) => [...prev, `发送: 设置station`]);
+      await connection?.sendSetOpModeCtrlFrame(opMode);
+      setReceivedMessages((prev) => [
+        ...prev,
+        `发送: 设置模式为 ${OpMode[opMode] || opMode}`,
+      ]);
     } catch (error) {
-      console.error("设置station失败:", error);
-      alert("设置station失败: " + (error as Error).message);
+      console.error(`设置模式 ${OpMode[opMode] || opMode} 失败:`, error);
+      alert(`设置模式失败: ${(error as Error).message}`);
+    }
+  };
+
+  const handleModeChange = (value: string) => {
+    const mode = parseInt(value, 10) as OpMode;
+    if (!isNaN(mode) && OpMode[mode] !== undefined) {
+      setSelectedOpMode(mode);
+      setStationMode(mode);
+    } else {
+      console.warn("Invalid OpMode selected:", value);
     }
   };
 
@@ -369,23 +384,52 @@ export default function DeviceScreen() {
           <View style={styles.buttonRow}>
             <Button
               variant="solid"
-              className={`mr-2 flex-1 ${isConnected ? "bg-blue-500" : "bg-gray-400"}`}
+              className={`mr-2 flex-1 ${isConnected ? "bg-primary-500" : "bg-gray-400"}`}
               onPress={getVersion}
               disabled={!isConnected}
             >
               <ButtonText>版本</ButtonText>
             </Button>
-            <Button
-              variant="solid"
-              className={`mr-2 flex-1 ${isConnected ? "bg-blue-500" : "bg-gray-400"}`}
-              onPress={setStationMode}
-              disabled={!isConnected}
+            <Select
+              onValueChange={handleModeChange}
+              isDisabled={!isConnected}
+              className="mr-2 flex-1"
             >
-              <ButtonText>station</ButtonText>
-            </Button>
+              <SelectTrigger
+                size="md"
+                disabled={!isConnected}
+                className={`${isConnected ? "bg-primary-500" : "bg-gray-400"} h-10 flex-1 items-center justify-center rounded-md border-0`}
+              >
+                <SelectInput
+                  placeholder="模式"
+                  className="m-0 p-0 text-center leading-none text-white"
+                  style={{ lineHeight: undefined }}
+                />
+              </SelectTrigger>
+              <SelectPortal>
+                <SelectModalBackdrop />
+                <SelectModalContent>
+                  <SelectDragIndicatorWrapper>
+                    <SelectDragIndicator />
+                  </SelectDragIndicatorWrapper>
+                  <SelectItem
+                    label="Station Mode"
+                    value={String(OpMode.STATION)}
+                  />
+                  <SelectItem
+                    label="SoftAP Mode"
+                    value={String(OpMode.SOFTAP)}
+                  />
+                  <SelectItem
+                    label="Station + SoftAP"
+                    value={String(OpMode.STATION_SOFTAP)}
+                  />
+                </SelectModalContent>
+              </SelectPortal>
+            </Select>
             <Button
               variant="solid"
-              className={`mr-2 flex-1 ${isConnected ? "bg-blue-500" : "bg-gray-400"}`}
+              className={`mr-2 flex-1 ${isConnected ? "bg-primary-500" : "bg-gray-400"}`}
               onPress={handleOpenConfigModal}
               disabled={!isConnected}
             >
@@ -395,7 +439,7 @@ export default function DeviceScreen() {
           <View style={styles.buttonRow}>
             <Button
               variant="solid"
-              className={`mr-2 flex-1 ${isConnected ? "bg-blue-500" : "bg-gray-400"}`}
+              className={`mr-2 flex-1 ${isConnected ? "bg-primary-500" : "bg-gray-400"}`}
               onPress={handleConnectWifi}
               disabled={!isConnected}
             >
@@ -403,7 +447,7 @@ export default function DeviceScreen() {
             </Button>
             <Button
               variant="solid"
-              className={`mr-2 flex-1 ${isConnected ? "bg-blue-500" : "bg-gray-400"}`}
+              className={`mr-2 flex-1 ${isConnected ? "bg-primary-500" : "bg-gray-400"}`}
               onPress={getWifiStatus}
               disabled={!isConnected}
             >
@@ -411,7 +455,7 @@ export default function DeviceScreen() {
             </Button>
             <Button
               variant="solid"
-              className={`mr-2 flex-1 ${isConnected ? "bg-blue-500" : "bg-gray-400"}`}
+              className={`mr-2 flex-1 ${isConnected ? "bg-primary-500" : "bg-gray-400"}`}
               onPress={() => setShowCustomDataModal(true)}
               disabled={!isConnected}
             >
@@ -419,7 +463,7 @@ export default function DeviceScreen() {
             </Button>
             <Button
               variant="solid"
-              className={`flex-1 ${isConnected ? "bg-blue-500" : "bg-gray-400"}`}
+              className={`flex-1 ${isConnected ? "bg-primary-500" : "bg-gray-400"}`}
               onPress={handleDisconnectWifi}
               disabled={!isConnected}
             >
@@ -600,6 +644,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     marginBottom: 12,
+    alignItems: "stretch",
   },
   input: {
     flex: 1,
