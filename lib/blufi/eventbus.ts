@@ -1,5 +1,4 @@
 import { ConnectionStateWithOthers, DataFrameSubType, OpModeWithOthers } from "@/lib/blufi/frame";
-import { Buffer } from "@craftzdog/react-native-buffer";
 
 export type EventCallback<T = any> = (data: T) => void;
 

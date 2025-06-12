@@ -1,7 +1,6 @@
 import { BLEDefault } from "@/lib/blufi/constants";
 import { EventBus, EventCallback, EventData, EventSubscription } from "@/lib/blufi/eventbus";
 import { AuthMode, checksum, createCtrlFrame, createDataFrame, CtrlFrame, CtrlFrameSubType, DataFrame, DataFrameSubType, decodeData, Frame, FrameCodec, FrameControl, FrameType, OpMode, SecurityMode } from "@/lib/blufi/frame";
-import { Buffer } from "@craftzdog/react-native-buffer";
 import { Permission, PermissionsAndroid, Platform } from "react-native";
 import { BleError, BleManager, State as BleState, Characteristic, Device, ScanOptions, Subscription, UUID } from "react-native-ble-plx";
 

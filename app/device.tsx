@@ -26,7 +26,6 @@ import { Spinner } from "@/components/ui/spinner";
 import { Text } from "@/components/ui/text";
 import { Connection, connectionManager } from "@/lib/blufi/connection";
 import { OpMode } from "@/lib/blufi/frame";
-import { Buffer } from "@craftzdog/react-native-buffer";
 import { Ionicons } from "@expo/vector-icons";
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";

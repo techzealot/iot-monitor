@@ -1,5 +1,4 @@
 import { crc16 } from "@/lib/blufi/utils";
-import { Buffer } from "@craftzdog/react-native-buffer";
 import { EventData } from "./eventbus";
 
 /**
